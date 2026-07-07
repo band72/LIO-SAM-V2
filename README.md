@@ -16,6 +16,37 @@ Key architectural shifts for this use case include:
 3. **Automated Landmark Integration:** To completely eliminate Z-drift and accumulated positional error over long distances, this system incorporates absolute Ground Control Points (GCPs) via survey targets.
 4. **Degeneracy Protection:** Eigenvalue checking in the Hessian matrix prevents "spiraling" or vertical drift in feature-poor environments (like long flat hallways or featureless open fields).
 
+### System Architecture Flowchart
+```mermaid
+graph TD
+    %% Sensors
+    LiDAR[3D LiDAR] -->|sensor_msgs/PointCloud2| IMUPreintegration
+    LiDAR -->|sensor_msgs/PointCloud2| ImageProjection
+    LiDAR -->|sensor_msgs/PointCloud2| TargetDetector
+    IMU[6/9-axis IMU] -->|sensor_msgs/Imu| IMUPreintegration
+
+    %% Nodes
+    subgraph LIO-SAM Pipeline
+        IMUPreintegration(IMU Preintegration) -->|Odometry| ImageProjection(Image Projection)
+        ImageProjection -->|Deskewed Cloud| FeatureExtraction(Feature Extraction)
+        FeatureExtraction -->|Edges/Surfaces| MapOptimization(Map Optimization - GTSAM)
+    end
+
+    %% Custom Nodes
+    subgraph High-Precision Customizations
+        TargetDetector(Automated Target Detector)
+        CSVInjector(Manual CSV Injector)
+    end
+
+    %% Connections
+    TargetDetector -->|Intensity Filter & Bounding Box| LandmarkTopic((lio_sam/landmark))
+    CSVInjector -->|Known GCPs| LandmarkTopic
+    LandmarkTopic -->|Absolute Position| MapOptimization
+
+    %% Output
+    MapOptimization -->|Final Trajectory| PCDExport((PCD Map Export))
+```
+
 ### Software & Sensor Specifications
 - **Base Framework:** ROS 2 (Jazzy Jalisco)
 - **LiDAR Support:** Velodyne, Ouster, Livox (3D LiDARs)
