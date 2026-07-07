@@ -3,6 +3,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, Command
+from launch.conditions import IfCondition
 from launch_ros.actions import Node
 
 
@@ -19,10 +20,16 @@ def generate_launch_description():
             share_dir, 'config', 'params.yaml'),
         description='FPath to the ROS2 parameters file to use.')
 
+    landmarks_declare = DeclareLaunchArgument(
+        'use_landmarks',
+        default_value='false',
+        description='Enable automated target detection for survey landmarks.')
+
     print("urdf_file_name : {}".format(xacro_path))
 
     return LaunchDescription([
         params_declare,
+        landmarks_declare,
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
@@ -72,7 +79,8 @@ def generate_launch_description():
             executable='lio_sam_targetDetector',
             name='lio_sam_targetDetector',
             parameters=[parameter_file],
-            output='screen'
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('use_landmarks'))
         ),
         Node(
             package='rviz2',

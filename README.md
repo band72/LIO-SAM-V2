@@ -61,7 +61,7 @@ Testing this pipeline requires offline processing (playing rosbag datasets).
 ### 1. Automated Survey Runner
 To run the system with maximum precision and automatically save the resulting `.pcd` map files, use the provided bash script:
 ```bash
-./run_survey.sh [path_to_bag_file]
+./run_survey.sh [path_to_bag_file] [--use-landmarks]
 ```
 The script will automatically launch LIO-SAM, play your dataset, wait for backend processing to finish, and prompt you to save the final `CornerMap.pcd`, `SurfMap.pcd`, and `GlobalMap.pcd`.
 
@@ -76,7 +76,9 @@ python3 landmark_injector.py my_landmarks.csv
 This forces the backend optimizer to warp the LiDAR trajectory to exactly match your surveyed landmarks.
 
 ### 3. Automated Target Detection
-A new PCL-based perception node (`lio_sam_targetDetector`) runs automatically alongside the mapping nodes. It constantly scans the incoming LiDAR feed for highly reflective survey targets.
+A new PCL-based perception node (`lio_sam_targetDetector`) can be run alongside the mapping nodes. It constantly scans the incoming LiDAR feed for highly reflective survey targets. Because it relies on intensity and shape matching, it defaults to **OFF** to prevent false positives in generic environments.
+
+To enable it, pass the `--use-landmarks` flag to the runner script.
 
 Currently configured to detect poles that are **0.25" diameter, 24" tall, with a 2" reflective disc**, it filters the environment for points with an intensity > 100, clusters them, measures their bounding box, and automatically injects them into the factor graph as absolute landmarks! 
 If you need to change target sizes, edit the parameters at the top of `src/targetDetector.cpp`.

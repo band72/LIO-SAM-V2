@@ -8,8 +8,22 @@
 # Usage: ./run_survey.sh [path_to_bag_file]
 # ==============================================================================
 
-# Default bag file if none is provided
-BAG_FILE=${1:-"/home/artwalk/Downloads/campus_small_dataset_ros2"}
+BAG_FILE=""
+USE_LANDMARKS="false"
+
+for arg in "$@"
+do
+    if [ "$arg" == "--use-landmarks" ]; then
+        USE_LANDMARKS="true"
+    elif [ -z "$BAG_FILE" ] && [[ "${arg:0:1}" != "-" ]]; then
+        BAG_FILE=$arg
+    fi
+done
+
+if [ -z "$BAG_FILE" ]; then
+    BAG_FILE="/home/artwalk/Downloads/campus_small_dataset_ros2"
+fi
+
 MAP_DEST="/home/artwalk/Downloads/LIO_SAM_MAP/"
 
 echo "======================================================================"
@@ -23,7 +37,7 @@ source /home/artwalk/ros2_ws/install/setup.bash
 
 # 2. Launch LIO-SAM in the background
 echo "=> Launching LIO-SAM..."
-ros2 launch lio_sam run.launch.py &
+ros2 launch lio_sam run.launch.py use_landmarks:=$USE_LANDMARKS &
 LIO_PID=$!
 
 # 3. Wait for nodes to initialize
