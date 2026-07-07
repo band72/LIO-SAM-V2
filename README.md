@@ -2,6 +2,34 @@
 
 **A real-time lidar-inertial odometry package. We strongly recommend the users read this document thoroughly and test the package with the provided dataset first. A video of the demonstration of the method can be found on [YouTube](https://www.youtube.com/watch?v=A0H8CoORZJU).**
 
+---
+## 🎯 High-Precision Surveying & Landmark Integration (Custom Features)
+This branch of LIO-SAM has been heavily modified and optimized for **survey-grade precision mapping**. Real-time performance constraints have been lifted to prioritize the densest, most accurate point cloud registration possible.
+
+### 1. Automated Survey Runner
+To run the system with maximum precision and automatically save the resulting `.pcd` map files, use the provided bash script:
+```bash
+./run_survey.sh [path_to_bag_file]
+```
+The script will automatically launch LIO-SAM, play your dataset, wait for backend processing to finish, and prompt you to save the final `CornerMap.pcd`, `SurfMap.pcd`, and `GlobalMap.pcd`.
+
+### 2. Manual Survey Landmark Injection (CSV)
+You can inject known Ground Control Points (GCPs) directly into the backend GTSAM optimizer to pin the map to absolute coordinates and eliminate drift.
+1. Create a `my_landmarks.csv` file formatted as `timestamp, x, y, z`
+2. While LIO-SAM is running, execute the python script:
+```bash
+cd scripts
+python3 landmark_injector.py my_landmarks.csv
+```
+This forces the backend optimizer to warp the LiDAR trajectory to exactly match your surveyed landmarks.
+
+### 3. Automated Target Detection
+A new PCL-based perception node (`lio_sam_targetDetector`) runs automatically alongside the mapping nodes. It constantly scans the incoming LiDAR feed for highly reflective survey targets.
+
+Currently configured to detect poles that are **0.25" diameter, 24" tall, with a 2" reflective disc**, it filters the environment for points with an intensity > 100, clusters them, measures their bounding box, and automatically injects them into the factor graph as absolute landmarks! 
+If you need to change target sizes, edit the parameters at the top of `src/targetDetector.cpp`.
+---
+
 <p align='center'>
     <img src="./config/doc/demo.gif" alt="drawing" width="800"/>
 </p>

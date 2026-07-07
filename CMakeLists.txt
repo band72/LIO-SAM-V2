@@ -51,6 +51,10 @@ ament_target_dependencies(${PROJECT_NAME}_mapOptimization rclcpp rclpy std_msgs 
 target_link_libraries(${PROJECT_NAME}_mapOptimization gtsam)
 rosidl_target_interfaces(${PROJECT_NAME}_mapOptimization ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
+add_executable(${PROJECT_NAME}_targetDetector src/targetDetector.cpp)
+ament_target_dependencies(${PROJECT_NAME}_targetDetector rclcpp rclpy std_msgs sensor_msgs geometry_msgs nav_msgs visualization_msgs tf2 tf2_ros tf2_eigen tf2_sensor_msgs tf2_geometry_msgs OpenCV PCL GTSAM cv_bridge pcl_conversions)
+rosidl_target_interfaces(${PROJECT_NAME}_targetDetector ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
 install(
   DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/
@@ -61,23 +65,12 @@ install(
   DESTINATION share/${PROJECT_NAME}/
 )
 
-install(
-  TARGETS ${PROJECT_NAME}_imageProjection
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(
-  TARGETS ${PROJECT_NAME}_imuPreintegration
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(
-  TARGETS ${PROJECT_NAME}_featureExtraction
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(
-  TARGETS ${PROJECT_NAME}_mapOptimization
+install(TARGETS
+  ${PROJECT_NAME}_imuPreintegration
+  ${PROJECT_NAME}_mapOptimization
+  ${PROJECT_NAME}_imageProjection
+  ${PROJECT_NAME}_featureExtraction
+  ${PROJECT_NAME}_targetDetector
   DESTINATION lib/${PROJECT_NAME}
 )
 

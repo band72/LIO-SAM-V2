@@ -6,6 +6,7 @@
 #include <gtsam/slam/PriorFactor.h>
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/navigation/GPSFactor.h>
+#include <geometry_msgs/msg/point_stamped.hpp>
 #include <gtsam/navigation/ImuFactor.h>
 #include <gtsam/navigation/CombinedImuFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
@@ -76,8 +77,12 @@ public:
     rclcpp::Subscription<lio_sam::msg::CloudInfo>::SharedPtr subCloud;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subGPS;
     rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr subLoop;
+    rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr subLandmark;
 
     std::deque<nav_msgs::msg::Odometry> gpsQueue;
+    std::deque<geometry_msgs::msg::PointStamped> landmarkQueue;
+    std::mutex mtxLandmark;
+    
     lio_sam::msg::CloudInfo cloudInfo;
 
     vector<pcl::PointCloud<PointType>::Ptr> cornerCloudKeyFrames;
@@ -175,6 +180,10 @@ public:
         subLoop = create_subscription<std_msgs::msg::Float64MultiArray>(
             "lio_loop/loop_closure_detection", qos,
             std::bind(&mapOptimization::loopInfoHandler, this, std::placeholders::_1));
+
+        subLandmark = create_subscription<geometry_msgs::msg::PointStamped>(
+            "lio_sam/landmark", qos,
+            std::bind(&mapOptimization::landmarkHandler, this, std::placeholders::_1));
 
         auto saveMapService = [this](const std::shared_ptr<rmw_request_id_t> request_header, const std::shared_ptr<lio_sam::srv::SaveMap::Request> req, std::shared_ptr<lio_sam::srv::SaveMap::Response> res) -> void {
             (void)request_header;
@@ -357,6 +366,12 @@ public:
     void gpsHandler(const nav_msgs::msg::Odometry::SharedPtr gpsMsg)
     {
         gpsQueue.push_back(*gpsMsg);
+    }
+
+    void landmarkHandler(const geometry_msgs::msg::PointStamped::SharedPtr msg)
+    {
+        std::lock_guard<std::mutex> lock(mtxLandmark);
+        landmarkQueue.push_back(*msg);
     }
 
     void pointAssociateToMap(PointType const * const pi, PointType * const po)
@@ -1582,6 +1597,64 @@ public:
         }
     }
 
+    void addLandmarkFactor()
+    {
+        if (landmarkQueue.empty())
+            return;
+
+        if (cloudKeyPoses3D->points.empty())
+            return;
+
+        std::lock_guard<std::mutex> lock(mtxLandmark);
+
+        while (!landmarkQueue.empty())
+        {
+            geometry_msgs::msg::PointStamped thisLandmark = landmarkQueue.front();
+            double landmarkTime = stamp2Sec(thisLandmark.header.stamp);
+
+            // Wait if the landmark is in the future relative to the current LiDAR scan
+            if (landmarkTime > timeLaserInfoCur + 0.2)
+                break;
+
+            landmarkQueue.pop_front();
+
+            // Find closest keyframe to the landmark timestamp
+            int closestKey = -1;
+            double minTimeDiff = 1000.0;
+            for (int i = 0; i < (int)cloudKeyPoses6D->points.size(); ++i)
+            {
+                double timeDiff = abs(cloudKeyPoses6D->points[i].time - landmarkTime);
+                if (timeDiff < minTimeDiff)
+                {
+                    minTimeDiff = timeDiff;
+                    closestKey = i;
+                }
+            }
+
+            // If we found a close keyframe (e.g. within 0.5 seconds)
+            if (closestKey != -1 && minTimeDiff < 0.5)
+            {
+                float landmark_x = thisLandmark.point.x;
+                float landmark_y = thisLandmark.point.y;
+                float landmark_z = thisLandmark.point.z;
+
+                // Typical survey grade is cm-level (0.01m). Variance = stddev^2 = 1e-4
+                noiseModel::Diagonal::shared_ptr landmark_noise = noiseModel::Diagonal::Variances((Vector3(1e-4, 1e-4, 1e-4)));
+                gtsam::GPSFactor landmark_factor(closestKey, gtsam::Point3(landmark_x, landmark_y, landmark_z), landmark_noise);
+                gtSAMgraph.add(landmark_factor);
+
+                RCLCPP_INFO(get_logger(), "Added Survey Landmark Factor at keyframe %d (diff: %.3fs): x = %.2f, y = %.2f, z = %.2f", 
+                            closestKey, minTimeDiff, landmark_x, landmark_y, landmark_z);
+                
+                aLoopIsClosed = true; // Trigger ISAM update exactly like a loop closure
+            }
+            else
+            {
+                RCLCPP_WARN(get_logger(), "Landmark dropped! No keyframe found within 0.5s (min diff: %.3fs)", minTimeDiff);
+            }
+        }
+    }
+
     void addLoopFactor()
     {
         if (loopIndexQueue.empty())
@@ -1612,6 +1685,9 @@ public:
 
         // gps factor
         addGPSFactor();
+        
+        // landmark factor
+        addLandmarkFactor();
 
         // loop factor
         addLoopFactor();

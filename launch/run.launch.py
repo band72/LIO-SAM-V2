@@ -68,6 +68,13 @@ def generate_launch_description():
             output='screen'
         ),
         Node(
+            package='lio_sam',
+            executable='lio_sam_targetDetector',
+            name='lio_sam_targetDetector',
+            parameters=[parameter_file],
+            output='screen'
+        ),
+        Node(
             package='rviz2',
             executable='rviz2',
             name='rviz2',
