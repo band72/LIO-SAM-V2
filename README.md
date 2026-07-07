@@ -226,6 +226,28 @@ ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap
 ```
 ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.2, destination: /Downloads/service_LOAM}"
 ```
+
+## Surveying Workflow
+
+For high-precision surveying, this repository includes automation scripts and tuned parameters to ensure perfect synchronization and loop closure:
+
+1. **Recording Data**: Use the provided `record_survey.sh` to record the exact topics required by LIO-SAM (`/points_raw` and `/imu_correct`).
+   ```bash
+   ./record_survey.sh [optional_bag_name]
+   ```
+
+2. **Survey-Grade Parameters**: The configuration file `config/params_survey_grade.yaml` is pre-tuned for high-density keyframe generation and strict loop closures (`historyKeyframeFitnessScore: 0.3`). To use it, edit `launch/run.launch.py` to point to `params_survey_grade.yaml` instead of `params.yaml`, then run `colcon build`.
+
+3. **Running the Survey**: Use `run_survey.sh` to launch LIO-SAM, play a bag file with clock synchronization (`--clock`), and automatically prompt you to save the fully optimized map when done.
+   ```bash
+   ./run_survey.sh path/to/dataset_bag
+   ```
+
+4. **Viewing the Map**: The final map is saved as `.pcd` files (e.g., `GlobalMap.pcd`). **CloudCompare** has native support for these files—you can simply drag and drop the `.pcd` directly into the CloudCompare window to visualize the 3D map! If you need to convert it to `.ply` for other pipelines, you can run:
+   ```bash
+   pcl_pcd2ply path/to/GlobalMap.pcd path/to/output.ply
+   ```
+
 ## Other notes
 
   - **Loop closure:** The loop function here gives an example of proof of concept. It is directly adapted from LeGO-LOAM loop closure. For more advanced loop closure implementation, please refer to [ScanContext](https://github.com/irapkaist/SC-LeGO-LOAM). Set the "loopClosureEnableFlag" in "params.yaml" to "true" to test the loop closure function. In Rviz, uncheck "Map (cloud)" and check "Map (global)". This is because the visualized map - "Map (cloud)" - is simply a stack of point clouds in Rviz. Their postion will not be updated after pose correction. The loop closure function here is simply adapted from LeGO-LOAM, which is an ICP-based method. Because ICP runs pretty slow, it is suggested that the playback speed is set to be "-r 1". You can try the Garden dataset for testing.

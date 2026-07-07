@@ -33,7 +33,7 @@ echo "======================================================================"
 # 1. Source ROS2 and workspace
 echo "=> Sourcing ROS2 and local workspace..."
 source /opt/ros/jazzy/setup.bash
-source /home/artwalk/ros2_ws/install/setup.bash
+source /home/artwalk/.gemini/antigravity-ide/scratch/LIO-SAM/install/setup.bash
 
 # 2. Launch LIO-SAM in the background
 echo "=> Launching LIO-SAM..."

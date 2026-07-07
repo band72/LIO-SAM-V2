@@ -107,7 +107,7 @@ public:
         odomOpt.callback_group = callbackGroupOdom;
 
         subImu = create_subscription<sensor_msgs::msg::Imu>(
-            imuTopic, qos_imu,
+            imuTopic, 10,
             std::bind(&ImageProjection::imuHandler, this, std::placeholders::_1),
             imuOpt);
         subOdom = create_subscription<nav_msgs::msg::Odometry>(
@@ -115,9 +115,13 @@ public:
             std::bind(&ImageProjection::odometryHandler, this, std::placeholders::_1),
             odomOpt);
         subLaserCloud = create_subscription<sensor_msgs::msg::PointCloud2>(
-            pointCloudTopic, qos_lidar,
+            pointCloudTopic, 10,
             std::bind(&ImageProjection::cloudHandler, this, std::placeholders::_1),
             lidarOpt);
+
+        RCLCPP_INFO(get_logger(), "Subscribing to LiDAR topic: %s", pointCloudTopic.c_str());
+        RCLCPP_INFO(get_logger(), "Subscribing to IMU topic: %s", imuTopic.c_str());
+        RCLCPP_INFO(get_logger(), "Subscribing to Odom topic: %s", odomTopic.c_str());
 
         pubExtractedCloud = create_publisher<sensor_msgs::msg::PointCloud2>(
             "lio_sam/deskew/cloud_deskewed", 1);
@@ -208,12 +212,18 @@ public:
 
     void cloudHandler(const sensor_msgs::msg::PointCloud2::SharedPtr laserCloudMsg)
     {
-        if (!cachePointCloud(laserCloudMsg))
+        RCLCPP_INFO(get_logger(), "cloudHandler called");
+        if (!cachePointCloud(laserCloudMsg)) {
+            RCLCPP_INFO(get_logger(), "cachePointCloud failed");
             return;
+        }
 
-        if (!deskewInfo())
+        if (!deskewInfo()) {
+            RCLCPP_INFO(get_logger(), "deskewInfo failed");
             return;
+        }
 
+        RCLCPP_INFO(get_logger(), "deskewInfo succeeded, projecting point cloud");
         projectPointCloud();
 
         cloudExtraction();

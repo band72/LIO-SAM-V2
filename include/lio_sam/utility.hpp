@@ -369,6 +369,15 @@ void imuRPY2rosRPY(sensor_msgs::msg::Imu *thisImuMsg, T *rosRoll, T *rosPitch, T
     double imuRoll, imuPitch, imuYaw;
     tf2::Quaternion orientation;
     tf2::fromMsg(thisImuMsg->orientation, orientation);
+
+    if (orientation.length2() < 1e-5)
+    {
+        orientation.setW(1.0);
+        orientation.setX(0.0);
+        orientation.setY(0.0);
+        orientation.setZ(0.0);
+    }
+
     tf2::Matrix3x3(orientation).getRPY(imuRoll, imuPitch, imuYaw);
 
     *rosRoll = imuRoll;
