@@ -84,6 +84,8 @@ public:
     bool useGpsElevation;
     float gpsCovThreshold;
     float poseCovThreshold;
+    float landmarkVariance;
+    float gpsSampleDistance;
 
     // Save pcd
     bool savePCD;
@@ -178,6 +180,10 @@ public:
         get_parameter("gpsCovThreshold", gpsCovThreshold);
         declare_parameter("poseCovThreshold", 25.0);
         get_parameter("poseCovThreshold", poseCovThreshold);
+        declare_parameter("landmarkVariance", 0.0001);
+        get_parameter("landmarkVariance", landmarkVariance);
+        declare_parameter("gpsSampleDistance", 5.0);
+        get_parameter("gpsSampleDistance", gpsSampleDistance);
         
         declare_parameter("savePCD", false);
         get_parameter("savePCD", savePCD);

@@ -19,6 +19,8 @@
     useGpsElevation: false                       # if GPS elevation is bad, set to "false"
     gpsCovThreshold: 2.0                         # m^2, threshold for using GPS data
     poseCovThreshold: 25.0                       # m^2, threshold for using GPS data
+    gpsSampleDistance: 5.0                      # meters, minimum distance robot must move before accepting another GPS point
+    landmarkVariance: 0.0001                    # m^2, the variance assigned to survey-grade absolute landmarks (smaller = higher weight)
 
     # Export settings
     savePCD: false                               # https://github.com/TixiaoShan/LIO-SAM/issues/3

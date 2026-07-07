@@ -1573,7 +1573,7 @@ public:
                 curGPSPoint.x = gps_x;
                 curGPSPoint.y = gps_y;
                 curGPSPoint.z = gps_z;
-                if (pointDistance(curGPSPoint, lastGPSPoint) < 5.0)
+                if (pointDistance(curGPSPoint, lastGPSPoint) < gpsSampleDistance)
                 {
                     continue;
                 }
@@ -1638,8 +1638,8 @@ public:
                 float landmark_y = thisLandmark.point.y;
                 float landmark_z = thisLandmark.point.z;
 
-                // Typical survey grade is cm-level (0.01m). Variance = stddev^2 = 1e-4
-                noiseModel::Diagonal::shared_ptr landmark_noise = noiseModel::Diagonal::Variances((Vector3(1e-4, 1e-4, 1e-4)));
+                // Variance provided by params.yaml (default 0.0001)
+                noiseModel::Diagonal::shared_ptr landmark_noise = noiseModel::Diagonal::Variances((Vector3(landmarkVariance, landmarkVariance, landmarkVariance)));
                 gtsam::GPSFactor landmark_factor(closestKey, gtsam::Point3(landmark_x, landmark_y, landmark_z), landmark_noise);
                 gtSAMgraph.add(landmark_factor);
 
