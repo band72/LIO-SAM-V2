@@ -55,7 +55,7 @@ public:
     NonlinearFactorGraph gtSAMgraph;
     Values initialEstimate;
     Values optimizedEstimate;
-    ISAM2 *isam;
+    std::unique_ptr<gtsam::ISAM2> isam;
     Values isamCurrentEstimate;
     Eigen::MatrixXd poseCovariance;
 
@@ -156,7 +156,7 @@ public:
         ISAM2Params parameters;
         parameters.relinearizeThreshold = 0.1;
         parameters.relinearizeSkip = 1;
-        isam = new ISAM2(parameters);
+        isam = std::unique_ptr<gtsam::ISAM2>(new ISAM2(parameters));
 
         pubKeyPoses = create_publisher<sensor_msgs::msg::PointCloud2>("lio_sam/mapping/trajectory", 1);
         pubLaserCloudSurround = create_publisher<sensor_msgs::msg::PointCloud2>("lio_sam/mapping/map_global", 1);
@@ -181,12 +181,32 @@ public:
             string saveMapDirectory;
             cout << "****************************************************" << endl;
             cout << "Saving map to pcd files ..." << endl;
-            if(req->destination.empty()) saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
-            else saveMapDirectory = std::getenv("HOME") + req->destination;
+            const char* home_dir = std::getenv("HOME");
+            std::string home_str = home_dir ? home_dir : "";
+            if(req->destination.empty()) saveMapDirectory = home_str + savePCDDirectory;
+            else saveMapDirectory = home_str + req->destination;
             cout << "Save destination: " << saveMapDirectory << endl;
+
+            // Safety checks on the directory path to prevent arbitrary command execution or deletion of critical directories
+            if (saveMapDirectory.empty() || saveMapDirectory == "/" || saveMapDirectory.find("..") != std::string::npos)
+            {
+                cout << "Invalid or unsafe save map directory: " << saveMapDirectory << endl;
+                res->success = false;
+                return;
+            }
+            if (saveMapDirectory.find('\'') != std::string::npos || saveMapDirectory.find(';') != std::string::npos || 
+                saveMapDirectory.find('&') != std::string::npos || saveMapDirectory.find('|') != std::string::npos)
+            {
+                cout << "Save map directory path contains invalid/unsafe characters: " << saveMapDirectory << endl;
+                res->success = false;
+                return;
+            }
+
             // create directory and remove old files;
-            int unused = system((std::string("exec rm -r ") + saveMapDirectory).c_str());
-            unused = system((std::string("mkdir -p ") + saveMapDirectory).c_str());
+            std::string rm_cmd = "exec rm -rf '" + saveMapDirectory + "'";
+            std::string mkdir_cmd = "mkdir -p '" + saveMapDirectory + "'";
+            int unused = system(rm_cmd.c_str());
+            unused = system(mkdir_cmd.c_str());
             // save key frame transformations
             pcl::io::savePCDFileBinary(saveMapDirectory + "/trajectory.pcd", *cloudKeyPoses3D);
             pcl::io::savePCDFileBinary(saveMapDirectory + "/transformations.pcd", *cloudKeyPoses6D);
@@ -297,6 +317,9 @@ public:
 
     void laserCloudInfoHandler(const lio_sam::msg::CloudInfo::SharedPtr msgIn)
     {
+        if (cloudKeyPoses3D->points.empty() && !msgIn->imu_available)
+            return;
+
         // extract time stamp
         timeLaserInfoStamp = msgIn->header.stamp;
         timeLaserInfoCur = stamp2Sec(msgIn->header.stamp);
@@ -410,9 +433,28 @@ public:
             return;
         cout << "****************************************************" << endl;
         cout << "Saving map to pcd files ..." << endl;
-        savePCDDirectory = std::getenv("HOME") + savePCDDirectory;
-        int unused = system((std::string("exec rm -r ") + savePCDDirectory).c_str());
-        unused = system((std::string("mkdir ") + savePCDDirectory).c_str());
+        const char* home_dir = std::getenv("HOME");
+        std::string home_str = home_dir ? home_dir : "";
+        savePCDDirectory = home_str + savePCDDirectory;
+
+        // Safety checks on the directory path to prevent arbitrary command execution or deletion of critical directories
+        if (savePCDDirectory.empty() || savePCDDirectory == "/" || savePCDDirectory.find("..") != std::string::npos)
+        {
+            cout << "Invalid or unsafe save map directory: " << savePCDDirectory << endl;
+            return;
+        }
+        if (savePCDDirectory.find('\'') != std::string::npos || savePCDDirectory.find(';') != std::string::npos || 
+            savePCDDirectory.find('&') != std::string::npos || savePCDDirectory.find('|') != std::string::npos)
+        {
+            cout << "Save map directory path contains invalid/unsafe characters: " << savePCDDirectory << endl;
+            return;
+        }
+
+        // create directory and remove old files;
+        std::string rm_cmd = "exec rm -rf '" + savePCDDirectory + "'";
+        std::string mkdir_cmd = "mkdir -p '" + savePCDDirectory + "'";
+        int unused = system(rm_cmd.c_str());
+        unused = system(mkdir_cmd.c_str());
         pcl::io::savePCDFileASCII(savePCDDirectory + "trajectory.pcd", *cloudKeyPoses3D);
         pcl::io::savePCDFileASCII(savePCDDirectory + "transformations.pcd", *cloudKeyPoses6D);
         pcl::PointCloud<PointType>::Ptr globalCornerCloud(new pcl::PointCloud<PointType>());
@@ -544,14 +586,18 @@ public:
             if (detectLoopClosureDistance(&loopKeyCur, &loopKeyPre) == false)
                 return;
 
+        RCLCPP_INFO(get_logger(), "Loop candidate found: cur=%d, pre=%d", loopKeyCur, loopKeyPre);
+
         // extract cloud
         pcl::PointCloud<PointType>::Ptr cureKeyframeCloud(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr prevKeyframeCloud(new pcl::PointCloud<PointType>());
         {
             loopFindNearKeyframes(cureKeyframeCloud, loopKeyCur, 0);
             loopFindNearKeyframes(prevKeyframeCloud, loopKeyPre, historyKeyframeSearchNum);
-            if (cureKeyframeCloud->size() < 300 || prevKeyframeCloud->size() < 1000)
+            if (cureKeyframeCloud->size() < 300 || prevKeyframeCloud->size() < 1000) {
+                RCLCPP_WARN(get_logger(), "Loop candidate skipped due to size: cur size=%zu (<300) or pre size=%zu (<1000)", cureKeyframeCloud->size(), prevKeyframeCloud->size());
                 return;
+            }
             if (pubHistoryKeyFrames->get_subscription_count() != 0)
                 publishCloud(pubHistoryKeyFrames, prevKeyframeCloud, timeLaserInfoStamp, odometryFrame);
         }
@@ -570,8 +616,12 @@ public:
         pcl::PointCloud<PointType>::Ptr unused_result(new pcl::PointCloud<PointType>());
         icp.align(*unused_result);
 
-        if (icp.hasConverged() == false || icp.getFitnessScore() > historyKeyframeFitnessScore)
+        if (icp.hasConverged() == false || icp.getFitnessScore() > historyKeyframeFitnessScore) {
+            RCLCPP_WARN(get_logger(), "Loop ICP failed: converged=%d, score=%f (threshold=%f)", icp.hasConverged(), icp.getFitnessScore(), historyKeyframeFitnessScore);
             return;
+        }
+
+        RCLCPP_INFO(get_logger(), "Loop closure detected! Between keyframe %d and %d. ICP fitness score: %f", loopKeyCur, loopKeyPre, icp.getFitnessScore());
 
         // publish corrected cloud
         if (pubIcpKeyFrames->get_subscription_count() != 0)
@@ -1177,7 +1227,8 @@ public:
         float crz = cos(transformTobeMapped[0]);
 
         int laserCloudSelNum = laserCloudOri->size();
-        if (laserCloudSelNum < 50) {
+        RCLCPP_INFO(get_logger(), "LMOptimization: matched=%d (iter=%d)", laserCloudSelNum, iterCount);
+        if (laserCloudSelNum < 10) {
             return false;
         }
 
@@ -1239,9 +1290,9 @@ public:
             matV.copyTo(matV2);
 
             isDegenerate = false;
-            float eignThre[6] = {100, 100, 100, 100, 100, 100};
+            float eignThre[6] = {10.0, 10.0, 10.0, 10.0, 10.0, 10.0};
             for (int i = 5; i >= 0; i--) {
-                if (matE.at<float>(0, i) < eignThre[i]) {
+                if (matE.at<float>(i) < eignThre[i]) {
                     for (int j = 0; j < 6; j++) {
                         matV2.at<float>(i, j) = 0;
                     }
@@ -1251,6 +1302,13 @@ public:
                 }
             }
             matP = matV.inv() * matV2;
+
+            RCLCPP_INFO(get_logger(),
+                "LMOptimization: matched=%d, eigenvalues=[%f, %f, %f, %f, %f, %f], degenerate=%d",
+                laserCloudSelNum, 
+                matE.at<float>(0), matE.at<float>(1), matE.at<float>(2),
+                matE.at<float>(3), matE.at<float>(4), matE.at<float>(5),
+                isDegenerate);
         }
 
         if (isDegenerate)
@@ -1260,12 +1318,27 @@ public:
             matX = matP * matX2;
         }
 
-        transformTobeMapped[0] += matX.at<float>(0, 0);
-        transformTobeMapped[1] += matX.at<float>(1, 0);
-        transformTobeMapped[2] += matX.at<float>(2, 0);
-        transformTobeMapped[3] += matX.at<float>(3, 0);
-        transformTobeMapped[4] += matX.at<float>(4, 0);
-        transformTobeMapped[5] += matX.at<float>(5, 0);
+        float roll_step = matX.at<float>(0, 0);
+        float pitch_step = matX.at<float>(1, 0);
+        float yaw_step = matX.at<float>(2, 0);
+        float x_step = matX.at<float>(3, 0);
+        float y_step = matX.at<float>(4, 0);
+        float z_step = matX.at<float>(5, 0);
+
+        roll_step = std::max(-0.1f, std::min(0.1f, roll_step));
+        pitch_step = std::max(-0.1f, std::min(0.1f, pitch_step));
+        yaw_step = std::max(-0.1f, std::min(0.1f, yaw_step));
+
+        x_step = std::max(-0.3f, std::min(0.3f, x_step));
+        y_step = std::max(-0.3f, std::min(0.3f, y_step));
+        z_step = std::max(-0.3f, std::min(0.3f, z_step));
+
+        transformTobeMapped[0] += roll_step;
+        transformTobeMapped[1] += pitch_step;
+        transformTobeMapped[2] += yaw_step;
+        transformTobeMapped[3] += x_step;
+        transformTobeMapped[4] += y_step;
+        transformTobeMapped[5] += z_step;
 
         float deltaR = sqrt(
                             pow(pcl::rad2deg(matX.at<float>(0, 0)), 2) +
@@ -1287,6 +1360,13 @@ public:
         if (cloudKeyPoses3D->points.empty())
             return;
 
+        RCLCPP_INFO(get_logger(),
+            "scan2MapOptimization: corner=%d, surf=%d, map_corner=%zu, map_surf=%zu, before: x=%f, y=%f, z=%f, rpy=[%f, %f, %f] deg",
+            laserCloudCornerLastDSNum, laserCloudSurfLastDSNum,
+            laserCloudCornerFromMapDS->size(), laserCloudSurfFromMapDS->size(),
+            transformTobeMapped[3], transformTobeMapped[4], transformTobeMapped[5],
+            pcl::rad2deg(transformTobeMapped[0]), pcl::rad2deg(transformTobeMapped[1]), pcl::rad2deg(transformTobeMapped[2]));
+
         if (laserCloudCornerLastDSNum > edgeFeatureMinValidNum && laserCloudSurfLastDSNum > surfFeatureMinValidNum)
         {
             kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMapDS);
@@ -1307,6 +1387,11 @@ public:
             }
 
             transformUpdate();
+
+            RCLCPP_INFO(get_logger(),
+                "scan2MapOptimization: after: x=%f, y=%f, z=%f, rpy=[%f, %f, %f] deg",
+                transformTobeMapped[3], transformTobeMapped[4], transformTobeMapped[5],
+                pcl::rad2deg(transformTobeMapped[0]), pcl::rad2deg(transformTobeMapped[1]), pcl::rad2deg(transformTobeMapped[2]));
         } else {
             RCLCPP_WARN(get_logger(), "Not enough features! Only %d edge and %d planar features available.", laserCloudCornerLastDSNum, laserCloudSurfLastDSNum);
         }
@@ -1396,6 +1481,13 @@ public:
         if (gpsQueue.empty())
             return;
 
+        // Warn if GPS queue is growing very large
+        if (gpsQueue.size() > 100)
+        {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, 
+                "GPS queue size is large (%zu). Please check timestamp synchronization.", gpsQueue.size());
+        }
+
         // wait for system initialized and settles down
         if (cloudKeyPoses3D->points.empty())
             return;
@@ -1406,8 +1498,11 @@ public:
         }
 
         // pose covariance small, no need to correct
-        if (poseCovariance(3,3) < poseCovThreshold && poseCovariance(4,4) < poseCovThreshold)
-            return;
+        if (poseCovariance.rows() >= 6 && poseCovariance.cols() >= 6)
+        {
+            if (poseCovariance(3,3) < poseCovThreshold && poseCovariance(4,4) < poseCovThreshold)
+                return;
+        }
 
         // last gps position
         static PointType lastGPSPoint;
@@ -1434,7 +1529,13 @@ public:
                 float noise_y = thisGPS.pose.covariance[7];
                 float noise_z = thisGPS.pose.covariance[14];
                 if (noise_x > gpsCovThreshold || noise_y > gpsCovThreshold)
+                {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                        "GPS factor skipped due to high noise: cov_x = %f, cov_y = %f (threshold = %f)",
+                        noise_x, noise_y, gpsCovThreshold);
                     continue;
+                }
+
                 float gps_x = thisGPS.pose.pose.position.x;
                 float gps_y = thisGPS.pose.pose.position.y;
                 float gps_z = thisGPS.pose.pose.position.z;
@@ -1446,7 +1547,11 @@ public:
 
                 // GPS not properly initialized (0,0,0)
                 if (abs(gps_x) < 1e-6 && abs(gps_y) < 1e-6)
+                {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, 
+                        "GPS position is near origin (0,0), skipping integration.");
                     continue;
+                }
 
                 // Add GPS every a few meters
                 PointType curGPSPoint;
@@ -1454,15 +1559,22 @@ public:
                 curGPSPoint.y = gps_y;
                 curGPSPoint.z = gps_z;
                 if (pointDistance(curGPSPoint, lastGPSPoint) < 5.0)
+                {
                     continue;
+                }
                 else
+                {
                     lastGPSPoint = curGPSPoint;
+                }
 
                 gtsam::Vector Vector3(3);
                 Vector3 << max(noise_x, 1.0f), max(noise_y, 1.0f), max(noise_z, 1.0f);
                 noiseModel::Diagonal::shared_ptr gps_noise = noiseModel::Diagonal::Variances(Vector3);
                 gtsam::GPSFactor gps_factor(cloudKeyPoses3D->size(), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
                 gtSAMgraph.add(gps_factor);
+
+                RCLCPP_INFO(get_logger(), "Added GPS Factor at keyframe %zu: x = %f, y = %f, z = %f, cov_x = %f, cov_y = %f", 
+                            cloudKeyPoses3D->size(), gps_x, gps_y, gps_z, noise_x, noise_y);
 
                 aLoopIsClosed = true;
                 break;
@@ -1508,16 +1620,23 @@ public:
         // gtSAMgraph.print("GTSAM Graph:\n");
 
         // update iSAM
-        isam->update(gtSAMgraph, initialEstimate);
-        isam->update();
-
-        if (aLoopIsClosed == true)
+        try
         {
+            isam->update(gtSAMgraph, initialEstimate);
             isam->update();
-            isam->update();
-            isam->update();
-            isam->update();
-            isam->update();
+
+            if (aLoopIsClosed == true)
+            {
+                isam->update();
+                isam->update();
+                isam->update();
+                isam->update();
+                isam->update();
+            }
+        }
+        catch (const std::exception& e)
+        {
+            RCLCPP_ERROR(get_logger(), "GTSAM iSAM2 update exception: %s", e.what());
         }
 
         gtSAMgraph.resize(0);
@@ -1528,10 +1647,16 @@ public:
         PointTypePose thisPose6D;
         Pose3 latestEstimate;
 
-        isamCurrentEstimate = isam->calculateEstimate();
-        latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
-        // cout << "****************************************************" << endl;
-        // isamCurrentEstimate.print("Current estimate: ");
+        try
+        {
+            isamCurrentEstimate = isam->calculateEstimate();
+            latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
+        }
+        catch (const std::exception& e)
+        {
+            RCLCPP_ERROR(get_logger(), "GTSAM iSAM2 calculateEstimate exception: %s. Skipping keyframe insertion.", e.what());
+            return;
+        }
 
         thisPose3D.x = latestEstimate.translation().x();
         thisPose3D.y = latestEstimate.translation().y();
@@ -1552,7 +1677,18 @@ public:
         // cout << "****************************************************" << endl;
         // cout << "Pose covariance:" << endl;
         // cout << isam->marginalCovariance(isamCurrentEstimate.size()-1) << endl << endl;
-        poseCovariance = isam->marginalCovariance(isamCurrentEstimate.size()-1);
+        try
+        {
+            poseCovariance = isam->marginalCovariance(isamCurrentEstimate.size()-1);
+        }
+        catch (const std::exception& e)
+        {
+            RCLCPP_ERROR(get_logger(), "GTSAM marginalCovariance exception: %s", e.what());
+            if (poseCovariance.rows() < 6 || poseCovariance.cols() < 6)
+            {
+                poseCovariance = Eigen::MatrixXd::Identity(6, 6) * 1e4;
+            }
+        }
 
         // save updated transform
         transformTobeMapped[0] = latestEstimate.rotation().roll();

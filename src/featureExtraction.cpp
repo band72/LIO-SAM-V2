@@ -33,9 +33,9 @@ public:
     std_msgs::msg::Header cloudHeader;
 
     std::vector<smoothness_t> cloudSmoothness;
-    float *cloudCurvature;
-    int *cloudNeighborPicked;
-    int *cloudLabel;
+    std::vector<float> cloudCurvature;
+    std::vector<int> cloudNeighborPicked;
+    std::vector<int> cloudLabel;
 
     FeatureExtraction(const rclcpp::NodeOptions & options) :
         ParamServer("lio_sam_featureExtraction", options)
@@ -64,9 +64,9 @@ public:
         cornerCloud.reset(new pcl::PointCloud<PointType>());
         surfaceCloud.reset(new pcl::PointCloud<PointType>());
 
-        cloudCurvature = new float[N_SCAN*Horizon_SCAN];
-        cloudNeighborPicked = new int[N_SCAN*Horizon_SCAN];
-        cloudLabel = new int[N_SCAN*Horizon_SCAN];
+        cloudCurvature.resize(N_SCAN*Horizon_SCAN);
+        cloudNeighborPicked.resize(N_SCAN*Horizon_SCAN);
+        cloudLabel.resize(N_SCAN*Horizon_SCAN);
     }
 
     void laserCloudInfoHandler(const lio_sam::msg::CloudInfo::SharedPtr msgIn)

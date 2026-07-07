@@ -60,10 +60,10 @@ private:
     std::deque<sensor_msgs::msg::PointCloud2> cloudQueue;
     sensor_msgs::msg::PointCloud2 currentCloudMsg;
 
-    double *imuTime = new double[queueLength];
-    double *imuRotX = new double[queueLength];
-    double *imuRotY = new double[queueLength];
-    double *imuRotZ = new double[queueLength];
+    std::vector<double> imuTime;
+    std::vector<double> imuRotX;
+    std::vector<double> imuRotY;
+    std::vector<double> imuRotZ;
 
     int imuPointerCur;
     bool firstPointFlag;
@@ -144,6 +144,11 @@ public:
 
         cloudInfo.point_col_ind.assign(N_SCAN*Horizon_SCAN, 0);
         cloudInfo.point_range.assign(N_SCAN*Horizon_SCAN, 0);
+
+        imuTime.resize(queueLength, 0.0);
+        imuRotX.resize(queueLength, 0.0);
+        imuRotY.resize(queueLength, 0.0);
+        imuRotZ.resize(queueLength, 0.0);
 
         resetParameters();
     }
@@ -345,14 +350,17 @@ public:
 
         imuPointerCur = 0;
 
+        bool imu_rpy_initialized = false;
         for (int i = 0; i < (int)imuQueue.size(); ++i)
         {
             sensor_msgs::msg::Imu thisImuMsg = imuQueue[i];
             double currentImuTime = stamp2Sec(thisImuMsg.header.stamp);
 
             // get roll, pitch, and yaw estimation for this scan
-            if (currentImuTime <= timeScanCur)
+            if (currentImuTime <= timeScanCur) {
                 imuRPY2rosRPY(&thisImuMsg, &cloudInfo.imu_roll_init, &cloudInfo.imu_pitch_init, &cloudInfo.imu_yaw_init);
+                imu_rpy_initialized = true;
+            }
             if (currentImuTime > timeScanEnd + 0.01)
                 break;
 
@@ -380,10 +388,18 @@ public:
 
         --imuPointerCur;
 
+        if (!imu_rpy_initialized && !imuQueue.empty()) {
+            sensor_msgs::msg::Imu firstImuMsg = imuQueue.front();
+            imuRPY2rosRPY(&firstImuMsg, &cloudInfo.imu_roll_init, &cloudInfo.imu_pitch_init, &cloudInfo.imu_yaw_init);
+        }
+
         if (imuPointerCur <= 0)
             return;
 
         cloudInfo.imu_available = true;
+        RCLCPP_INFO(get_logger(), "Scan time=%f: imu_available=%d, init RPY=[%f, %f, %f]",
+                    timeScanCur, (int)cloudInfo.imu_available,
+                    cloudInfo.imu_roll_init, cloudInfo.imu_pitch_init, cloudInfo.imu_yaw_init);
     }
 
     void odomDeskewInfo()

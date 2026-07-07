@@ -14,7 +14,7 @@
 #include <gtsam/inference/Symbol.h>
 
 #include <gtsam/nonlinear/ISAM2.h>
-#include <gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>
+// #include <gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>
 
 using gtsam::symbol_shorthand::X; // Pose3 (x,y,z,r,p,y)
 using gtsam::symbol_shorthand::V; // Vel   (xdot,ydot,zdot)
@@ -42,6 +42,7 @@ public:
     std::shared_ptr<tf2_ros::TransformBroadcaster> tfBroadcaster;
     std::shared_ptr<tf2_ros::TransformListener> tfListener;
     tf2::Stamped<tf2::Transform> lidar2Baselink;
+    bool lidar2BaselinkInitialized = false;
 
     double lidarOdomTime = -1;
     deque<nav_msgs::msg::Odometry> imuOdomQueue;
@@ -127,14 +128,19 @@ public:
         // publish tf
         if(lidarFrame != baselinkFrame)
         {
-            try
+            if (!lidar2BaselinkInitialized)
             {
-                tf2::fromMsg(tfBuffer->lookupTransform(
-                    lidarFrame, baselinkFrame, rclcpp::Time(0)), lidar2Baselink);
-            }
-            catch (tf2::TransformException ex)
-            {
-                RCLCPP_ERROR(get_logger(), "%s", ex.what());
+                try
+                {
+                    geometry_msgs::msg::TransformStamped ts_msg = tfBuffer->lookupTransform(
+                        lidarFrame, baselinkFrame, rclcpp::Time(0));
+                    tf2::fromMsg(ts_msg, lidar2Baselink);
+                    lidar2BaselinkInitialized = true;
+                }
+                catch (tf2::TransformException &ex)
+                {
+                    RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 1000, "Transform from %s to %s not found yet: %s", lidarFrame.c_str(), baselinkFrame.c_str(), ex.what());
+                }
             }
             tf2::Stamped<tf2::Transform> tb(
                 tCur * lidar2Baselink, tf2_ros::fromMsg(odomMsg->header.stamp), odometryFrame);
@@ -142,6 +148,8 @@ public:
         }
         geometry_msgs::msg::TransformStamped ts;
         tf2::convert(tCur, ts);
+        ts.header.stamp = odomMsg->header.stamp;
+        ts.header.frame_id = odometryFrame;
         ts.child_frame_id = baselinkFrame;
         tfBroadcaster->sendTransform(ts);
 
@@ -192,8 +200,8 @@ public:
     gtsam::Vector noiseModelBetweenBias;
 
 
-    gtsam::PreintegratedImuMeasurements *imuIntegratorOpt_;
-    gtsam::PreintegratedImuMeasurements *imuIntegratorImu_;
+    std::unique_ptr<gtsam::PreintegratedImuMeasurements> imuIntegratorOpt_;
+    std::unique_ptr<gtsam::PreintegratedImuMeasurements> imuIntegratorImu_;
 
     std::deque<sensor_msgs::msg::Imu> imuQueOpt;
     std::deque<sensor_msgs::msg::Imu> imuQueImu;
@@ -249,17 +257,17 @@ public:
         p->accelerometerCovariance  = gtsam::Matrix33::Identity(3,3) * pow(imuAccNoise, 2); // acc white noise in continuous
         p->gyroscopeCovariance      = gtsam::Matrix33::Identity(3,3) * pow(imuGyrNoise, 2); // gyro white noise in continuous
         p->integrationCovariance    = gtsam::Matrix33::Identity(3,3) * pow(1e-4, 2); // error committed in integrating position from velocities
-        gtsam::imuBias::ConstantBias prior_imu_bias((gtsam::Vector(6) << 0, 0, 0, 0, 0, 0).finished());; // assume zero initial bias
+        gtsam::imuBias::ConstantBias prior_imu_bias((gtsam::Vector(6) << 0, 0, 0, 0, 0, 0).finished()); // assume zero initial bias
 
         priorPoseNoise  = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(6) << 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2).finished()); // rad,rad,rad,m, m, m
-        priorVelNoise   = gtsam::noiseModel::Isotropic::Sigma(3, 1e4); // m/s
-        priorBiasNoise  = gtsam::noiseModel::Isotropic::Sigma(6, 1e-3); // 1e-2 ~ 1e-3 seems to be good
+        priorVelNoise   = gtsam::noiseModel::Isotropic::Sigma(3, 1e-2); // m/s
+        priorBiasNoise  = gtsam::noiseModel::Isotropic::Sigma(6, 1e-4); // 1e-2 ~ 1e-3 seems to be good
         correctionNoise = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(6) << 0.05, 0.05, 0.05, 0.1, 0.1, 0.1).finished()); // rad,rad,rad,m, m, m
         correctionNoise2 = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(6) << 1, 1, 1, 1, 1, 1).finished()); // rad,rad,rad,m, m, m
         noiseModelBetweenBias = (gtsam::Vector(6) << imuAccBiasN, imuAccBiasN, imuAccBiasN, imuGyrBiasN, imuGyrBiasN, imuGyrBiasN).finished();
         
-        imuIntegratorImu_ = new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias); // setting up the IMU integration for IMU message thread
-        imuIntegratorOpt_ = new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias); // setting up the IMU integration for optimization        
+        imuIntegratorImu_ = std::unique_ptr<gtsam::PreintegratedImuMeasurements>(new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias)); // setting up the IMU integration for IMU message thread
+        imuIntegratorOpt_ = std::unique_ptr<gtsam::PreintegratedImuMeasurements>(new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias)); // setting up the IMU integration for optimization        
     }
 
     void resetOptimization()
@@ -301,6 +309,9 @@ public:
         float r_z = odomMsg->pose.pose.orientation.z;
         float r_w = odomMsg->pose.pose.orientation.w;
         bool degenerate = (int)odomMsg->pose.covariance[0] == 1 ? true : false;
+        if (key < 30) {
+            degenerate = false;
+        }
         gtsam::Pose3 lidarPose = gtsam::Pose3(gtsam::Rot3::Quaternion(r_w, r_x, r_y, r_z), gtsam::Point3(p_x, p_y, p_z));
 
 
@@ -341,6 +352,8 @@ public:
             graphFactors.resize(0);
             graphValues.clear();
 
+            prevState_ = gtsam::NavState(prevPose_, prevVel_);
+
             imuIntegratorImu_->resetIntegrationAndSetBias(prevBias_);
             imuIntegratorOpt_->resetIntegrationAndSetBias(prevBias_);
             
@@ -354,9 +367,20 @@ public:
         if (key == 100)
         {
             // get updated noise before reset
-            gtsam::noiseModel::Gaussian::shared_ptr updatedPoseNoise = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(X(key-1)));
-            gtsam::noiseModel::Gaussian::shared_ptr updatedVelNoise  = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(V(key-1)));
-            gtsam::noiseModel::Gaussian::shared_ptr updatedBiasNoise = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(B(key-1)));
+            gtsam::noiseModel::Gaussian::shared_ptr updatedPoseNoise, updatedVelNoise, updatedBiasNoise;
+            try
+            {
+                updatedPoseNoise = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(X(key-1)));
+                updatedVelNoise  = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(V(key-1)));
+                updatedBiasNoise = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(B(key-1)));
+            }
+            catch (const std::exception& e)
+            {
+                RCLCPP_ERROR(get_logger(), "GTSAM marginalCovariance exception during reset: %s. Using priors.", e.what());
+                updatedPoseNoise = priorPoseNoise;
+                updatedVelNoise = priorVelNoise;
+                updatedBiasNoise = priorBiasNoise;
+            }
             // reset graph
             resetOptimization();
             // add pose
@@ -373,7 +397,14 @@ public:
             graphValues.insert(V(0), prevVel_);
             graphValues.insert(B(0), prevBias_);
             // optimize once
-            optimizer.update(graphFactors, graphValues);
+            try
+            {
+                optimizer.update(graphFactors, graphValues);
+            }
+            catch (const std::exception& e)
+            {
+                RCLCPP_ERROR(get_logger(), "GTSAM optimizer update exception during reset: %s", e.what());
+            }
             graphFactors.resize(0);
             graphValues.clear();
 
@@ -413,20 +444,44 @@ public:
         graphFactors.add(pose_factor);
         // insert predicted values
         gtsam::NavState propState_ = imuIntegratorOpt_->predict(prevState_, prevBias_);
+        if (propState_.v().norm() > 10.0)
+        {
+            RCLCPP_WARN(get_logger(), "High predicted velocity: x=%f, y=%f, z=%f, norm=%f (prev_norm=%f, dt_ij=%f)", 
+                        propState_.v().x(), propState_.v().y(), propState_.v().z(), propState_.v().norm(), 
+                        prevState_.v().norm(), imuIntegratorOpt_->deltaTij());
+        }
         graphValues.insert(X(key), propState_.pose());
         graphValues.insert(V(key), propState_.v());
         graphValues.insert(B(key), prevBias_);
         // optimize
-        optimizer.update(graphFactors, graphValues);
-        optimizer.update();
-        graphFactors.resize(0);
-        graphValues.clear();
-        // Overwrite the beginning of the preintegration for the next step.
-        gtsam::Values result = optimizer.calculateEstimate();
-        prevPose_  = result.at<gtsam::Pose3>(X(key));
-        prevVel_   = result.at<gtsam::Vector3>(V(key));
-        prevState_ = gtsam::NavState(prevPose_, prevVel_);
-        prevBias_  = result.at<gtsam::imuBias::ConstantBias>(B(key));
+        try
+        {
+            optimizer.update(graphFactors, graphValues);
+            optimizer.update();
+            graphFactors.resize(0);
+            graphValues.clear();
+
+            // Overwrite the beginning of the preintegration for the next step.
+            gtsam::Values result = optimizer.calculateEstimate();
+            prevPose_  = result.at<gtsam::Pose3>(X(key));
+            prevVel_   = result.at<gtsam::Vector3>(V(key));
+            prevState_ = gtsam::NavState(prevPose_, prevVel_);
+            prevBias_  = result.at<gtsam::imuBias::ConstantBias>(B(key));
+            
+            RCLCPP_INFO(get_logger(), "Optimization result key=%d: pose=[%f, %f, %f], vel=[%f, %f, %f], bias_a=[%f, %f, %f], bias_g=[%f, %f, %f]",
+                        key, prevPose_.translation().x(), prevPose_.translation().y(), prevPose_.translation().z(),
+                        prevVel_.x(), prevVel_.y(), prevVel_.z(),
+                        prevBias_.accelerometer().x(), prevBias_.accelerometer().y(), prevBias_.accelerometer().z(),
+                        prevBias_.gyroscope().x(), prevBias_.gyroscope().y(), prevBias_.gyroscope().z());
+        }
+        catch (const std::exception& e)
+        {
+            RCLCPP_ERROR(get_logger(), "GTSAM optimizer update or calculateEstimate exception: %s. Resetting parameters.", e.what());
+            graphFactors.resize(0);
+            graphValues.clear();
+            resetParams();
+            return;
+        }
         // Reset the optimization preintegration object.
         imuIntegratorOpt_->resetIntegrationAndSetBias(prevBias_);
         // check optimization
@@ -472,17 +527,18 @@ public:
     bool failureDetection(const gtsam::Vector3& velCur, const gtsam::imuBias::ConstantBias& biasCur)
     {
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
-        if (vel.norm() > 30)
+        Eigen::Vector3f ba(biasCur.accelerometer().x(), biasCur.accelerometer().y(), biasCur.accelerometer().z());
+        Eigen::Vector3f bg(biasCur.gyroscope().x(), biasCur.gyroscope().y(), biasCur.gyroscope().z());
+
+        if (vel.norm() > 100)
         {
-            RCLCPP_WARN(get_logger(), "Large velocity, reset IMU-preintegration!");
+            RCLCPP_WARN(get_logger(), "Large velocity: x=%f, y=%f, z=%f, norm=%f, reset IMU-preintegration!", vel.x(), vel.y(), vel.z(), vel.norm());
             return true;
         }
 
-        Eigen::Vector3f ba(biasCur.accelerometer().x(), biasCur.accelerometer().y(), biasCur.accelerometer().z());
-        Eigen::Vector3f bg(biasCur.gyroscope().x(), biasCur.gyroscope().y(), biasCur.gyroscope().z());
         if (ba.norm() > 1.0 || bg.norm() > 1.0)
         {
-            RCLCPP_WARN(get_logger(), "Large bias, reset IMU-preintegration!");
+            RCLCPP_WARN(get_logger(), "Large bias: ba_norm=%f, bg_norm=%f, reset IMU-preintegration!", ba.norm(), bg.norm());
             return true;
         }
 
@@ -530,9 +586,11 @@ public:
         odometry.pose.pose.orientation.z = lidarPose.rotation().toQuaternion().z();
         odometry.pose.pose.orientation.w = lidarPose.rotation().toQuaternion().w();
         
-        odometry.twist.twist.linear.x = currentState.velocity().x();
-        odometry.twist.twist.linear.y = currentState.velocity().y();
-        odometry.twist.twist.linear.z = currentState.velocity().z();
+        // transform linear velocity to lidar local frame
+        gtsam::Vector3 localVelocity = lidarPose.rotation().unrotate(currentState.velocity());
+        odometry.twist.twist.linear.x = localVelocity.x();
+        odometry.twist.twist.linear.y = localVelocity.y();
+        odometry.twist.twist.linear.z = localVelocity.z();
         odometry.twist.twist.angular.x = thisImu.angular_velocity.x + prevBiasOdom.gyroscope().x();
         odometry.twist.twist.angular.y = thisImu.angular_velocity.y + prevBiasOdom.gyroscope().y();
         odometry.twist.twist.angular.z = thisImu.angular_velocity.z + prevBiasOdom.gyroscope().z();
