@@ -45,11 +45,11 @@
     imuRPYWeight: 0.00
 
     extrinsicTrans:  [ 0.0,  0.0,  0.0 ]
-    extrinsicRot:    [-1.0,  0.0,  0.0,
+    extrinsicRot:    [ 1.0,  0.0,  0.0,
                        0.0,  1.0,  0.0,
-                       0.0,  0.0, -1.0 ]
-    extrinsicRPY:    [ 0.0,  1.0,  0.0,
-                      -1.0,  0.0,  0.0,
+                       0.0,  0.0,  1.0 ]
+    extrinsicRPY:    [ 1.0,  0.0,  0.0,
+                       0.0,  1.0,  0.0,
                        0.0,  0.0,  1.0 ]
 
     # LOAM feature threshold
@@ -69,7 +69,7 @@
 
     # CPU Params
     numberOfCores: 4                              # number of cores for mapping optimization
-    mappingProcessInterval: 0.15                   # seconds, regulate mapping frequency
+    mappingProcessInterval: 0.0                   # seconds, regulate mapping frequency
 
     # Surrounding map
     surroundingkeyframeAddingDistThreshold: 0.1   # meters, regulate keyframe adding threshold
