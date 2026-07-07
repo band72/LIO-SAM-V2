@@ -2,15 +2,15 @@
 # ==============================================================================
 # LIO-SAM Survey Mapping Runner
 # ==============================================================================
-# This script automates the process of launching LIO-SAM and playing a ROS2
-# bag file for offline, high-precision surveying.
+# This script automates the process of launching LIO-SAM, playing a ROS2
+# bag file, and optionally extracting the final PCD map.
 #
 # Usage: ./run_survey.sh [path_to_bag_file]
-# Example: ./run_survey.sh /home/artwalk/Downloads/campus_small_dataset_ros2
 # ==============================================================================
 
 # Default bag file if none is provided
 BAG_FILE=${1:-"/home/artwalk/Downloads/campus_small_dataset_ros2"}
+MAP_DEST="/home/artwalk/Downloads/LIO_SAM_MAP/"
 
 echo "======================================================================"
 echo " Starting LIO-SAM High-Precision Survey Run"
@@ -32,16 +32,30 @@ sleep 5
 
 # 4. Play the bag file
 echo "=> Playing dataset: $BAG_FILE"
-echo "   NOTE: Using --clock to provide simulated time to LIO-SAM."
-echo "   If the high-precision settings cause LIO-SAM to fall behind,"
-echo "   you can edit this script and add '--rate 0.5' to run at half speed."
 echo "----------------------------------------------------------------------"
 ros2 bag play "$BAG_FILE" --clock
 
-# 5. Cleanup when the bag finishes or the user presses Ctrl+C
+# 5. Wait for backlog to finish processing before saving
 echo "----------------------------------------------------------------------"
 echo "=> Bag playback finished!"
-echo "   LIO-SAM is likely still processing the final backlog of frames."
-echo "   You can continue to explore the map in RViz."
-echo "   Press Ctrl+C to stop LIO-SAM and exit this script completely."
+echo "   Because you are using high-precision settings, LIO-SAM may still be"
+echo "   processing the backlog of frames in the background."
+echo ""
+echo "   WAIT until you see the loop closures in the terminal output, or until"
+echo "   the map stops updating in RViz."
+echo ""
+read -p "   Do you want to save the final map as a PCD file? [y/N]: " SAVE_MAP
+
+if [[ "$SAVE_MAP" =~ ^[Yy]$ ]]; then
+    # 6. Save the Map
+    echo "=> Saving Map to: $MAP_DEST"
+    ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.0, destination: '$MAP_DEST'}"
+    echo "=> Map saved!"
+else
+    echo "=> Skipping PCD map save."
+fi
+
+# 7. Cleanup
+echo "----------------------------------------------------------------------"
+echo "=> Press Ctrl+C to stop LIO-SAM and exit this script completely."
 wait $LIO_PID
