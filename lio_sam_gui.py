@@ -34,9 +34,9 @@ class LIOSAMApp:
         
         # Config Selection
         tk.Label(frame_top, text="Configuration:").grid(row=1, column=0, sticky="w", pady=5)
-        self.config_var = tk.StringVar(value="params_survey_grade.yaml")
+        self.config_var = tk.StringVar(value="params.yaml")
         config_dropdown = ttk.Combobox(frame_top, textvariable=self.config_var, state="readonly", width=47)
-        config_dropdown['values'] = ("params_survey_grade.yaml", "params.yaml")
+        config_dropdown['values'] = ("params.yaml", "params_survey_grade.yaml")
         config_dropdown.grid(row=1, column=1, padx=5, sticky="w")
         
         # Conversion Toggle
