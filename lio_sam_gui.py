@@ -38,6 +38,7 @@ class LIOSAMApp:
         config_dropdown = ttk.Combobox(frame_top, textvariable=self.config_var, state="readonly", width=47)
         config_dropdown['values'] = ("params.yaml", "params_survey_grade.yaml")
         config_dropdown.grid(row=1, column=1, padx=5, sticky="w")
+        tk.Button(frame_top, text="✎ Edit", command=self.edit_config).grid(row=1, column=2, padx=5)
         
         # Conversion Toggle
         self.convert_var = tk.BooleanVar(value=True)
@@ -61,6 +62,42 @@ class LIOSAMApp:
         self.console = tk.Text(self.root, bg="black", fg="lightgreen", height=20)
         self.console.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
+    def edit_config(self):
+        config_file = os.path.join(self.workspace_dir, "config", self.config_var.get())
+        if not os.path.exists(config_file):
+            messagebox.showerror("Error", f"Config file not found:\n{config_file}")
+            return
+            
+        top = tk.Toplevel(self.root)
+        top.title(f"Edit {self.config_var.get()}")
+        top.geometry("800x600")
+        
+        text_area = tk.Text(top, wrap="none", font=("Courier", 10))
+        text_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Load content
+        try:
+            with open(config_file, "r") as f:
+                text_area.insert(tk.END, f.read())
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            top.destroy()
+            return
+            
+        def save_file():
+            try:
+                with open(config_file, "w") as f:
+                    f.write(text_area.get("1.0", tk.END))
+                messagebox.showinfo("Success", "Configuration saved!")
+                top.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+                
+        btn_frame = tk.Frame(top)
+        btn_frame.pack(fill=tk.X, pady=5)
+        tk.Button(btn_frame, text="Save", bg="#2196F3", fg="white", command=save_file).pack(side=tk.RIGHT, padx=10)
+        tk.Button(btn_frame, text="Cancel", command=top.destroy).pack(side=tk.RIGHT)
+
     def browse_bag(self):
         path = filedialog.askdirectory(title="Select ROS 2 Bag Directory")
         if path:
