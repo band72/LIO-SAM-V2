@@ -227,7 +227,18 @@ ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap
 ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.2, destination: /Downloads/service_LOAM}"
 ```
 
-## Surveying Workflow
+## LIO-SAM Graphical User Interface (GUI)
+
+We have provided a native Ubuntu desktop app to manage the entire workflow without touching the terminal! The GUI allows you to select your ROS 2 bag dataset, choose between Real-Time and Survey parameters, and automatically convert output files to `.ply`.
+
+**To run the GUI:**
+```bash
+cd LIO-SAM
+./lio_sam_gui.py
+```
+*(Note: If you receive a tkinter module error, install it via: `sudo apt install python3-tk`)*
+
+## Surveying Workflow (Command Line)
 
 For high-precision surveying, this repository includes automation scripts and tuned parameters to ensure perfect synchronization and loop closure:
 
