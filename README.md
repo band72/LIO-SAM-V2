@@ -6,6 +6,27 @@
 ## 🎯 High-Precision Surveying & Landmark Integration (Custom Features)
 This branch of LIO-SAM has been heavily modified and optimized for **survey-grade precision mapping**. Real-time performance constraints have been lifted to prioritize the densest, most accurate point cloud registration possible.
 
+### Detailed Use Case Description
+This customized version of LIO-SAM is designed specifically for **Survey-Grade LiDAR Mapping**. 
+Traditional LIO-SAM aggressively downsamples point clouds to achieve real-time (10Hz+) mapping for fast-moving robots. In this branch, real-time performance is sacrificed for maximum accuracy, making it ideal for high-precision infrastructure surveying, topographical mapping, and architectural scanning. 
+
+Key architectural shifts for this use case include:
+1. **Aggressive Processing Intervals:** `mappingProcessInterval` is set to `0.0`, meaning every single LiDAR frame is processed and optimized, resulting in incredibly dense point clouds.
+2. **High-Resolution Voxel Grids:** Downsampling resolution is tightened to `0.2m` to retain structural fidelity while still allowing GTSAM to solve the factor graph.
+3. **Automated Landmark Integration:** To completely eliminate Z-drift and accumulated positional error over long distances, this system incorporates absolute Ground Control Points (GCPs) via survey targets.
+4. **Degeneracy Protection:** Eigenvalue checking in the Hessian matrix prevents "spiraling" or vertical drift in feature-poor environments (like long flat hallways or featureless open fields).
+
+### Software & Sensor Specifications
+- **Base Framework:** ROS 2 (Jazzy Jalisco)
+- **LiDAR Support:** Velodyne, Ouster, Livox (3D LiDARs)
+- **IMU Support:** 9-axis (preferred) or 6-axis IMU, tightly coupled
+- **Core Dependencies:** GTSAM >= 4.0.0, PCL (Point Cloud Library) >= 1.10
+
+### Testing & Validation
+Testing this pipeline requires offline processing (playing rosbag datasets). 
+- **Methodology:** Because the optimizer processes every frame at high resolution, the pipeline will fall behind real-time playback. The system buffers the incoming `sensor_msgs/PointCloud2` data and processes it sequentially. 
+- **Validation:** When testing a bag, the user must wait for the backend to finish clearing the queue after bag playback stops. Loop closures should report fitness scores well below `1.0` (typically `~0.1` to `~0.5`), indicating near-perfect geometric alignment before accepting the map.
+
 ### 1. Automated Survey Runner
 To run the system with maximum precision and automatically save the resulting `.pcd` map files, use the provided bash script:
 ```bash
