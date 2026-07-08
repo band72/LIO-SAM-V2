@@ -266,6 +266,24 @@ cd LIO-SAM
 - **Configuration Editor:** Click the "✎ Edit" button next to the config dropdown to directly edit your `.yaml` parameters (like loop closure thresholds) in a pop-up window.
 - **Auto-Conversion:** Check the "Convert to PLY" and "Convert to LAS" boxes before clicking "Save Map" to automatically trigger `pcl_pcd2ply` and `pdal translate` on your mapped point clouds.
 
+## Live Data Recording Interface (GUI)
+
+In addition to the SLAM processing GUI, we also provide a standalone interface specifically for **recording live datasets** from your robot's sensors on the field.
+
+![Bag Recorder GUI Mockup](/home/artwalk/.gemini/antigravity-ide/brain/96810574-ff37-4fb5-b0d0-0ce1b02e9bd1/lio_sam_record_gui_mockup_1783469770502.png)
+
+**To run the Recorder:**
+```bash
+cd LIO-SAM
+./lio_sam_record_gui.py
+```
+
+**Recorder Features:**
+- **Live ROS 2 Topic Monitor:** Click "Refresh Topics" to dynamically poll `ros2 topic list` and ensure your LiDAR/IMU drivers are actively publishing data before you record.
+- **Dynamic Configuration:** Manually type in your sensor's exact topic names (e.g. `/points_raw` and `/imu_correct`).
+- **Safe Output Directories:** Automatically appends Unix timestamps to your bag folders so you never accidentally overwrite a previous survey.
+- **Robust Recording:** The red "Start Recording" button safely spawns `ros2 bag record` in the background, and "Stop Recording" securely terminates it to prevent SQLite3 database corruption.
+
 ## Surveying Workflow (Command Line)
 
 For high-precision surveying, this repository includes automation scripts and tuned parameters to ensure perfect synchronization and loop closure:
