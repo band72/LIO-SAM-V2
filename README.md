@@ -247,6 +247,8 @@ ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.2, desti
 
 We have provided a native Ubuntu desktop app to manage the entire workflow without touching the terminal! The GUI allows you to select your ROS 2 bag dataset, edit configuration parameters in a popup window, and automatically convert output files to `.ply` and `.las` formats.
 
+![Survey GUI Mockup](images/survey_gui.png)
+
 **Prerequisites:**
 Before running the GUI, ensure you have the required dependencies installed:
 ```bash
@@ -270,7 +272,7 @@ cd LIO-SAM
 
 In addition to the SLAM processing GUI, we also provide a standalone interface specifically for **recording live datasets** from your robot's sensors on the field.
 
-![Bag Recorder GUI Mockup](/home/artwalk/.gemini/antigravity-ide/brain/96810574-ff37-4fb5-b0d0-0ce1b02e9bd1/lio_sam_record_gui_mockup_1783469770502.png)
+![Bag Recorder GUI Mockup](images/record_gui.png)
 
 **To run the Recorder:**
 ```bash
