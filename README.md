@@ -229,14 +229,26 @@ ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.2, desti
 
 ## LIO-SAM Graphical User Interface (GUI)
 
-We have provided a native Ubuntu desktop app to manage the entire workflow without touching the terminal! The GUI allows you to select your ROS 2 bag dataset, choose between Real-Time and Survey parameters, and automatically convert output files to `.ply`.
+We have provided a native Ubuntu desktop app to manage the entire workflow without touching the terminal! The GUI allows you to select your ROS 2 bag dataset, edit configuration parameters in a popup window, and automatically convert output files to `.ply` and `.las` formats.
+
+**Prerequisites:**
+Before running the GUI, ensure you have the required dependencies installed:
+```bash
+sudo apt update
+sudo apt install python3-tk pdal -y
+```
+- `python3-tk` is required to render the graphical window.
+- `pdal` is required if you want to use the `.las` point cloud export feature.
 
 **To run the GUI:**
 ```bash
 cd LIO-SAM
 ./lio_sam_gui.py
 ```
-*(Note: If you receive a tkinter module error, install it via: `sudo apt install python3-tk`)*
+
+**GUI Features:**
+- **Configuration Editor:** Click the "✎ Edit" button next to the config dropdown to directly edit your `.yaml` parameters (like loop closure thresholds) in a pop-up window.
+- **Auto-Conversion:** Check the "Convert to PLY" and "Convert to LAS" boxes before clicking "Save Map" to automatically trigger `pcl_pcd2ply` and `pdal translate` on your mapped point clouds.
 
 ## Surveying Workflow (Command Line)
 
