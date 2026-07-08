@@ -42,7 +42,10 @@ class LIOSAMApp:
         
         # Conversion Toggle
         self.convert_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(frame_top, text="Convert PCD to PLY after saving", variable=self.convert_var).grid(row=2, column=1, sticky="w", pady=5)
+        tk.Checkbutton(frame_top, text="Convert to PLY", variable=self.convert_var).grid(row=2, column=1, sticky="w", pady=5)
+        
+        self.convert_las_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(frame_top, text="Convert to LAS", variable=self.convert_las_var).grid(row=2, column=1, padx=120, sticky="w", pady=5)
         
         # Buttons
         frame_btns = tk.Frame(self.root, padx=10, pady=5)
@@ -184,6 +187,20 @@ class LIOSAMApp:
                 self.log("=> Successfully converted to GlobalMap.ply!")
             except subprocess.CalledProcessError as e:
                 self.log("=> ERROR converting map: " + e.output)
+                
+        if self.convert_las_var.get():
+            self.log("=> Converting GlobalMap.pcd to GlobalMap.las using PDAL...")
+            las_cmd = f"pdal translate {self.map_dest}/GlobalMap.pcd {self.map_dest}/GlobalMap.las"
+            try:
+                out = subprocess.check_output(las_cmd, shell=True, text=True, stderr=subprocess.STDOUT)
+                self.log(out)
+                self.log("=> Successfully converted to GlobalMap.las!")
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 127:
+                    self.log("=> ERROR: PDAL not installed. Run: sudo apt install pdal")
+                    messagebox.showerror("Missing Dependency", "To export to LAS, you must install PDAL.\nRun this in your terminal:\nsudo apt install pdal")
+                else:
+                    self.log("=> ERROR converting to LAS: " + e.output)
         
         self.log("=> Process Complete! You may stop the SLAM node.")
 
