@@ -3,6 +3,22 @@
 **A real-time lidar-inertial odometry package. We strongly recommend the users read this document thoroughly and test the package with the provided dataset first. A video of the demonstration of the method can be found on [YouTube](https://www.youtube.com/watch?v=A0H8CoORZJU).**
 
 ---
+## Tuning for High-Precision Surveying
+
+When adapting LIO-SAM for high-precision surveying instead of real-time autonomy, getting the parameters right is critical to prevent map warping, "skipping," or GTSAM graph explosions (bird's nests). You can edit these by clicking **"✎ Edit"** in the GUI.
+
+### 1. Loop Closure Strictness (`historyKeyframeFitnessScore`)
+- **What it is:** The ICP (Iterative Closest Point) fitness score threshold for accepting a loop closure. Lower = stricter.
+- **Why it matters:** LIO-SAM defaults to `0.3`. If you loosen this (e.g., to `3.0`), the algorithm will forcefully merge paths that *look* similar but aren't perfectly aligned, causing the final point cloud map to warp and twist. **Always keep this at `0.3` or lower for surveying.**
+
+### 2. Keyframe Density (`surroundingkeyframeAddingDistThreshold`)
+- **What it is:** The distance the robot must travel before a new keyframe is added to the map. Defaults to `1.0` meters.
+- **Why it matters:** It is tempting to lower this to `0.1m` to get a denser map. However, if your robot moves slowly, adding keyframes every 10cm forces the GTSAM optimizer to compare nearly identical point clouds. This mathematically creates an underconstrained, singular matrix (`Indeterminant linear system detected`), causing the trajectory to instantly explode. Stick to `1.0m` for stable SLAM graphs.
+
+### 3. Timestamp Synchronization (`use_sim_time`)
+- **What it is:** Forces ROS 2 nodes to listen to the `/clock` topic published by the bag file rather than your computer's real-time clock.
+- **Why it matters:** If you replay a bag from 2023 but `robot_state_publisher` is running on 2026 wall-time, the TF coordinate transforms will completely fracture. LIO-SAM won't be able to look up sensor positions, leading to "skipping" and immediate IMU integration failure. We have hardcoded `{'use_sim_time': True}` into all nodes in `run.launch.py` to guarantee this never happens during GUI bag playback.
+
 ## 🎯 High-Precision Surveying & Landmark Integration (Custom Features)
 This branch of LIO-SAM has been heavily modified and optimized for **survey-grade precision mapping**. Real-time performance constraints have been lifted to prioritize the densest, most accurate point cloud registration possible.
 
