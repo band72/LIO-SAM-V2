@@ -1,6 +1,21 @@
-# LIO-SAM
+# LIO-SAM-V2
 
-**A real-time lidar-inertial odometry package. We strongly recommend the users read this document thoroughly and test the package with the provided dataset first. A video of the demonstration of the method can be found on [YouTube](https://www.youtube.com/watch?v=A0H8CoORZJU).**
+**A real-time lidar-inertial odometry package optimized for high-precision surveying.** 
+
+### 🌐 Live Interactive SLAM Simulator
+We have built an interactive, web-based 2D SLAM simulator demonstrating the core concepts of LIO-SAM (such as IMU pre-integration, LiDAR scan matching, loop closure, landmark constraint adjustments, and RTK GNSS updates).
+
+🔗 **Live Website:** [liosamslam.surge.sh](https://liosamslam.surge.sh)
+
+[![LIO-SAM SLAM Simulator](images/lio_sam_simulation.png)](https://liosamslam.surge.sh)
+
+#### What the Web Simulator Demonstrates:
+- **LIO-SAM Robot:** Visualizes the robot moving along a trajectory, displaying active LiDAR scan rays and accumulated point clouds.
+- **IMU Pre-Integration:** Shows the warm-start prediction dashed line. Slower update frequencies (50 Hz to 200 Hz) increase integration step size and path wobble, while higher frequencies (1000 Hz) yield stable tracking.
+- **LiDAR Noise (Accuracy):** Modulating this slider dynamically adds spatial scatter to the point cloud and accelerates raw ICP scan matching drift.
+- **Multi-Landmark Adjustments:** Shows structural factor locks (e.g., house corners and monuments). Locking onto two or more features triggers a global pose-graph optimization, snapping all estimated landmarks to their true coordinates.
+- **RTK GNSS Updates:** Demonstrates absolute position priors. Every N seconds, a satellite correction beam shoots down, resetting accumulated dead reckoning drift back to zero.
+- **Factor Graph View:** Displays real-time factor graph node creation (priors, odometry edges, loop closures, and landmark factors).
 
 ---
 ## Tuning for High-Precision Surveying
