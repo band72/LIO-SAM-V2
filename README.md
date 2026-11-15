@@ -1,2 +1,415 @@
 # LIO-SAM-V2
-LIDAR SLAM Algorithm fine tuned for Surveying and Mapping
+
+**A real-time lidar-inertial odometry package optimized for high-precision surveying.** 
+
+### 🌐 Live Interactive SLAM Simulator
+We have built an interactive, web-based 2D SLAM simulator demonstrating the core concepts of LIO-SAM (such as IMU pre-integration, LiDAR scan matching, loop closure, landmark constraint adjustments, and RTK GNSS updates).
+
+🔗 **Live Website:** [liosamslam.surge.sh](https://liosamslam.surge.sh)
+
+[![LIO-SAM SLAM Simulator](images/lio_sam_simulation.png)](https://liosamslam.surge.sh)
+
+#### What the Web Simulator Demonstrates:
+- **LIO-SAM Robot:** Visualizes the robot moving along a trajectory, displaying active LiDAR scan rays and accumulated point clouds.
+- **IMU Pre-Integration:** Shows the warm-start prediction dashed line. Slower update frequencies (50 Hz to 200 Hz) increase integration step size and path wobble, while higher frequencies (1000 Hz) yield stable tracking.
+- **LiDAR Noise (Accuracy):** Modulating this slider dynamically adds spatial scatter to the point cloud and accelerates raw ICP scan matching drift.
+- **Multi-Landmark Adjustments:** Shows structural factor locks (e.g., house corners and monuments). Locking onto two or more features triggers a global pose-graph optimization, snapping all estimated landmarks to their true coordinates.
+- **RTK GNSS Updates:** Demonstrates absolute position priors. Every N seconds, a satellite correction beam shoots down, resetting accumulated dead reckoning drift back to zero.
+- **Factor Graph View:** Displays real-time factor graph node creation (priors, odometry edges, loop closures, and landmark factors).
+
+---
+## Tuning for High-Precision Surveying
+
+When adapting LIO-SAM for high-precision surveying instead of real-time autonomy, getting the parameters right is critical to prevent map warping, "skipping," or GTSAM graph explosions (bird's nests). You can edit these by clicking **"✎ Edit"** in the GUI.
+
+### 1. Loop Closure Strictness (`historyKeyframeFitnessScore`)
+- **What it is:** The ICP (Iterative Closest Point) fitness score threshold for accepting a loop closure. Lower = stricter.
+- **Why it matters:** LIO-SAM defaults to `0.3`. If you loosen this (e.g., to `3.0`), the algorithm will forcefully merge paths that *look* similar but aren't perfectly aligned, causing the final point cloud map to warp and twist. **Always keep this at `0.3` or lower for surveying.**
+
+### 2. Keyframe Density (`surroundingkeyframeAddingDistThreshold`)
+- **What it is:** The distance the robot must travel before a new keyframe is added to the map. Defaults to `1.0` meters.
+- **Why it matters:** It is tempting to lower this to `0.1m` to get a denser map. However, if your robot moves slowly, adding keyframes every 10cm forces the GTSAM optimizer to compare nearly identical point clouds. This mathematically creates an underconstrained, singular matrix (`Indeterminant linear system detected`), causing the trajectory to instantly explode. Stick to `1.0m` for stable SLAM graphs.
+
+### 3. Timestamp Synchronization (`use_sim_time`)
+- **What it is:** Forces ROS 2 nodes to listen to the `/clock` topic published by the bag file rather than your computer's real-time clock.
+- **Why it matters:** If you replay a bag from 2023 but `robot_state_publisher` is running on 2026 wall-time, the TF coordinate transforms will completely fracture. LIO-SAM won't be able to look up sensor positions, leading to "skipping" and immediate IMU integration failure. We have hardcoded `{'use_sim_time': True}` into all nodes in `run.launch.py` to guarantee this never happens during GUI bag playback.
+
+## 🎯 High-Precision Surveying & Landmark Integration (Custom Features)
+This branch of LIO-SAM has been heavily modified and optimized for **survey-grade precision mapping**. Real-time performance constraints have been lifted to prioritize the densest, most accurate point cloud registration possible.
+
+### Detailed Use Case Description
+This customized version of LIO-SAM is designed specifically for **Survey-Grade LiDAR Mapping**. 
+Traditional LIO-SAM aggressively downsamples point clouds to achieve real-time (10Hz+) mapping for fast-moving robots. In this branch, real-time performance is sacrificed for maximum accuracy, making it ideal for high-precision infrastructure surveying, topographical mapping, and architectural scanning. 
+
+Key architectural shifts for this use case include:
+1. **Aggressive Processing Intervals:** `mappingProcessInterval` is set to `0.0`, meaning every single LiDAR frame is processed and optimized, resulting in incredibly dense point clouds.
+2. **High-Resolution Voxel Grids:** Downsampling resolution is tightened to `0.2m` to retain structural fidelity while still allowing GTSAM to solve the factor graph.
+3. **Automated Landmark Integration:** To completely eliminate Z-drift and accumulated positional error over long distances, this system incorporates absolute Ground Control Points (GCPs) via survey targets.
+4. **Degeneracy Protection:** Eigenvalue checking in the Hessian matrix prevents "spiraling" or vertical drift in feature-poor environments (like long flat hallways or featureless open fields).
+
+### System Architecture Flowchart
+```mermaid
+graph TD
+    %% Sensors
+    LiDAR[3D LiDAR] -->|sensor_msgs/PointCloud2| IMUPreintegration
+    LiDAR -->|sensor_msgs/PointCloud2| ImageProjection
+    LiDAR -->|sensor_msgs/PointCloud2| TargetDetector
+    IMU[6/9-axis IMU] -->|sensor_msgs/Imu| IMUPreintegration
+
+    %% Nodes
+    subgraph LIO-SAM Pipeline
+        IMUPreintegration(IMU Preintegration) -->|Odometry| ImageProjection(Image Projection)
+        ImageProjection -->|Deskewed Cloud| FeatureExtraction(Feature Extraction)
+        FeatureExtraction -->|Edges/Surfaces| MapOptimization(Map Optimization - GTSAM)
+    end
+
+    %% Custom Nodes
+    subgraph High-Precision Customizations
+        TargetDetector(Automated Target Detector)
+        CSVInjector(Manual CSV Injector)
+    end
+
+    %% Connections
+    TargetDetector -->|Intensity Filter & Bounding Box| LandmarkTopic((lio_sam/landmark))
+    CSVInjector -->|Known GCPs| LandmarkTopic
+    LandmarkTopic -->|Absolute Position| MapOptimization
+
+    %% Output
+    MapOptimization -->|Final Trajectory| PCDExport((PCD Map Export))
+```
+
+### Software & Sensor Specifications
+- **Base Framework:** ROS 2 (Jazzy Jalisco)
+- **LiDAR Support:** Velodyne, Ouster, Livox (3D LiDARs)
+- **IMU Support:** 9-axis (preferred) or 6-axis IMU, tightly coupled
+- **Core Dependencies:** GTSAM >= 4.0.0, PCL (Point Cloud Library) >= 1.10
+
+### Testing & Validation
+Testing this pipeline requires offline processing (playing rosbag datasets). 
+- **Methodology:** Because the optimizer processes every frame at high resolution, the pipeline will fall behind real-time playback. The system buffers the incoming `sensor_msgs/PointCloud2` data and processes it sequentially. 
+- **Validation:** When testing a bag, the user must wait for the backend to finish clearing the queue after bag playback stops. Loop closures should report fitness scores well below `1.0` (typically `~0.1` to `~0.5`), indicating near-perfect geometric alignment before accepting the map.
+
+### 1. Automated Survey Runner
+To run the system with maximum precision and automatically save the resulting `.pcd` map files, use the provided bash script:
+```bash
+./run_survey.sh [path_to_bag_file] [--use-landmarks]
+```
+The script will automatically launch LIO-SAM, play your dataset, wait for backend processing to finish, and prompt you to save the final `CornerMap.pcd`, `SurfMap.pcd`, and `GlobalMap.pcd`.
+
+### 2. Manual Survey Landmark Injection (CSV)
+You can inject known Ground Control Points (GCPs) directly into the backend GTSAM optimizer to pin the map to absolute coordinates and eliminate drift.
+1. Create a `my_landmarks.csv` file formatted as `timestamp, x, y, z`
+2. While LIO-SAM is running, execute the python script:
+```bash
+cd scripts
+python3 landmark_injector.py my_landmarks.csv
+```
+This forces the backend optimizer to warp the LiDAR trajectory to exactly match your surveyed landmarks.
+
+### 3. Automated Target Detection
+A new PCL-based perception node (`lio_sam_targetDetector`) can be run alongside the mapping nodes. It constantly scans the incoming LiDAR feed for highly reflective survey targets. Because it relies on intensity and shape matching, it defaults to **OFF** to prevent false positives in generic environments.
+
+To enable it, pass the `--use-landmarks` flag to the runner script.
+
+Currently configured to detect poles that are **0.25" diameter, 24" tall, with a 2" reflective disc**, it filters the environment for points with an intensity > 100, clusters them, measures their bounding box, and automatically injects them into the factor graph as absolute landmarks! 
+If you need to change target sizes, edit the parameters at the top of `src/targetDetector.cpp`.
+---
+
+<p align='center'>
+    <img src="./config/doc/demo.gif" alt="drawing" width="800"/>
+</p>
+
+<p align='center'>
+    <img src="./config/doc/device-hand-2.png" alt="drawing" width="200"/>
+    <img src="./config/doc/device-hand.png" alt="drawing" width="200"/>
+    <img src="./config/doc/device-jackal.png" alt="drawing" width="200"/>
+    <img src="./config/doc/device-boat.png" alt="drawing" width="200"/>
+</p>
+
+## Menu
+
+  - [**System architecture**](#system-architecture)
+
+  - [**Notes on ROS2 branch**](#notes-on-ros2-branch)
+
+  - [**Package dependency**](#dependency)
+
+  - [**Package install**](#install)
+
+  - [**Prepare lidar data**](#prepare-lidar-data) (must read)
+
+  - [**Prepare IMU data**](#prepare-imu-data) (must read)
+
+  - [**Sample datasets**](#sample-datasets)
+
+  - [**Run the package**](#run-the-package)
+
+  - [**Other notes**](#other-notes)
+
+  - [**Issues**](#issues)
+
+  - [**Paper**](#paper)
+
+  - [**TODO**](#todo)
+
+  - [**Related Package**](#related-package)
+
+  - [**Acknowledgement**](#acknowledgement)
+
+## System architecture
+
+<p align='center'>
+    <img src="./config/doc/system.png" alt="drawing" width="800"/>
+</p>
+
+We design a system that maintains two graphs and runs up to 10x faster than real-time. 
+  - The factor graph in "mapOptimization.cpp" optimizes lidar odometry factor and GPS factor. This factor graph is maintained consistently throughout the whole test. 
+  - The factor graph in "imuPreintegration.cpp" optimizes IMU and lidar odometry factor and estimates IMU bias. This factor graph is reset periodically and guarantees real-time odometry estimation at IMU frequency.
+
+## Notes on ROS2 branch
+
+There are some features of the original ROS1 version that are currently missing in this ROS2 version, namely:
+- Testing with Velodyne lidars and Microstrain IMUs
+- A launch file for the navsat module/GPS factor
+- The rviz2 configuration misses many elements
+
+This branch was tested with an Ouster lidar and a Xsens IMU using the following ROS2 drivers:
+- [ros2_ouster_drivers](https://github.com/ros-drivers/ros2_ouster_drivers)
+- [bluespace_ai_xsens_ros_mti_driver](https://github.com/bluespace-ai/bluespace_ai_xsens_ros_mti_driver)
+
+In these tests, the IMU was mounted on the bottom of the lidar such that their x-axes pointed in the same direction. The parameters `extrinsicRot` and `extrinsicRPY` in `params.yaml` correspond to this constellation.
+
+## Dependencies
+
+- [ROS2](https://docs.ros.org/en/foxy/Installation.html) (tested with Foxy on Ubuntu 20.04)
+  ```
+  sudo apt install ros-foxy-perception-pcl \
+                   ros-foxy-pcl-msgs \
+                   ros-foxy-vision-opencv \
+                   ros-foxy-xacro
+  ```
+- [gtsam](https://github.com/borglab/gtsam/releases) (Georgia Tech Smoothing and Mapping library)
+  ```
+  # Add GTSAM-PPA
+  sudo add-apt-repository ppa:borglab/gtsam-release-4.0
+  sudo apt install libgtsam-dev libgtsam-unstable-dev
+  ```
+
+## Install
+
+Use the following commands to download and compile the package.
+
+  ```
+  cd ~/ros2_ws/src
+  git clone https://github.com/TixiaoShan/LIO-SAM.git
+  cd lio-sam
+  git checkout ros2
+  cd ..
+  colcon build
+  ```
+
+## Prepare lidar data
+
+The user needs to prepare the point cloud data in the correct format for cloud deskewing, which is mainly done in "imageProjection.cpp". The two requirements are:
+  - **Provide point time stamp**. LIO-SAM uses IMU data to perform point cloud deskew. Thus, the relative point time in a scan needs to be known. The up-to-date Velodyne ROS driver should output this information directly. Here, we assume the point time channel is called "time." The definition of the point type is located at the top of the "imageProjection.cpp." "deskewPoint()" function utilizes this relative time to obtain the transformation of this point relative to the beginning of the scan. When the lidar rotates at 10Hz, the timestamp of a point should vary between 0 and 0.1 seconds. If you are using other lidar sensors, you may need to change the name of this time channel and make sure that it is the relative time in a scan.
+  - **Provide point ring number**. LIO-SAM uses this information to organize the point correctly in a matrix. The ring number indicates which channel of the sensor that this point belongs to. The definition of the point type is located at the top of "imageProjection.cpp." The up-to-date Velodyne ROS driver should output this information directly. Again, if you are using other lidar sensors, you may need to rename this information. Note that only mechanical lidars are supported by the package currently. 
+
+## Prepare IMU data
+
+  - **IMU requirement**. Like the original LOAM implementation, LIO-SAM only works with a 9-axis IMU, which gives roll, pitch, and yaw estimation. The roll and pitch estimation is mainly used to initialize the system at the correct attitude. The yaw estimation initializes the system at the right heading when using GPS data. Theoretically, an initialization procedure like VINS-Mono will enable LIO-SAM to work with a 6-axis IMU. The performance of the system largely depends on the quality of the IMU measurements. The higher the IMU data rate, the better the system accuracy. We use Microstrain 3DM-GX5-25, which outputs data at 500Hz. We recommend using an IMU that gives at least a 200Hz output rate. Note that the internal IMU of Ouster lidar is an 6-axis IMU.
+
+  - **IMU alignment**. LIO-SAM transforms IMU raw data from the IMU frame to the Lidar frame, which follows the ROS REP-105 convention (x - forward, y - left, z - upward). To make the system function properly, the correct extrinsic transformation needs to be provided in "params.yaml" file. **The reason why there are two extrinsics is that my IMU (Microstrain 3DM-GX5-25) acceleration and attitude have different cooridinates. Depend on your IMU manufacturer, the two extrinsics for your IMU may or may not be the same**. Using our setup as an example:
+    - we need to set the readings of x-z acceleration and gyro negative to transform the IMU data in the lidar frame, which is indicated by "extrinsicRot" in "params.yaml." 
+    - The transformation of attitude readings is slightly different. We rotate the attitude measurements by -90 degrees around "lidar-z" axis and get the corresponding roll, pitch, and yaw readings in the lidar frame. This transformation is indicated by "extrinsicRPY" in "params.yaml."
+
+  - **IMU debug**. It's strongly recommended that the user uncomment the debug lines in "imuHandler()" of "imageProjection.cpp" and test the output of the transformed IMU data. The user can rotate the sensor suite to check whether the readings correspond to the sensor's movement. A YouTube video that shows the corrected IMU data can be found [here (link to YouTube)](https://youtu.be/BOUK8LYQhHs).
+
+
+<p align='center'>
+    <img src="./config/doc/imu-transform.png" alt="drawing" width="800"/>
+</p>
+<p align='center'>
+    <img src="./config/doc/imu-debug.gif" alt="drawing" width="800"/>
+</p>
+
+## Sample datasets
+
+For data protection reasons, no data set can currently be made available for ROS2. 
+
+README.md of the master branch contains some links to ROS1 rosbags. Using [ros1_bridge](https://github.com/ros2/ros1_bridge) with these rosbags and this ROS2 branch of LIO-SAM did however not succeeed for timing reasons.
+
+## Run the package
+
+1. Run the launch file:
+```
+ros2 launch lio_sam run.launch.py
+```
+
+2. Play existing bag files:
+```
+ros2 bag play your-bag.bag
+```
+
+## Save map
+```
+ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap
+```
+```
+ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.2, destination: /Downloads/service_LOAM}"
+```
+
+## LIO-SAM Graphical User Interface (GUI)
+
+We have provided a native Ubuntu desktop app to manage the entire workflow without touching the terminal! The GUI allows you to select your ROS 2 bag dataset, edit configuration parameters in a popup window, and automatically convert output files to `.ply` and `.las` formats.
+
+![Survey GUI Mockup](images/survey_gui.png)
+
+**Prerequisites:**
+Before running the GUI, ensure you have the required dependencies installed:
+```bash
+sudo apt update
+sudo apt install python3-tk pdal -y
+```
+- `python3-tk` is required to render the graphical window.
+- `pdal` is required if you want to use the `.las` point cloud export feature.
+
+**To run the GUI:**
+```bash
+cd LIO-SAM
+./lio_sam_gui.py
+```
+
+**GUI Features:**
+- **Configuration Editor:** Click the "✎ Edit" button next to the config dropdown to directly edit your `.yaml` parameters (like loop closure thresholds) in a pop-up window.
+- **Auto-Conversion:** Check the "Convert to PLY" and "Convert to LAS" boxes before clicking "Save Map" to automatically trigger `pcl_pcd2ply` and `pdal translate` on your mapped point clouds.
+
+## Live Data Recording Interface (GUI)
+
+In addition to the SLAM processing GUI, we also provide a standalone interface specifically for **recording live datasets** from your robot's sensors on the field.
+
+![Bag Recorder GUI Mockup](images/record_gui.png)
+
+**To run the Recorder:**
+```bash
+cd LIO-SAM
+./lio_sam_record_gui.py
+```
+
+**Recorder Features:**
+- **Live ROS 2 Topic Monitor:** Click "Refresh Topics" to dynamically poll `ros2 topic list` and ensure your LiDAR/IMU drivers are actively publishing data before you record.
+- **Dynamic Configuration:** Manually type in your sensor's exact topic names (e.g. `/points_raw` and `/imu_correct`).
+- **Safe Output Directories:** Automatically appends Unix timestamps to your bag folders so you never accidentally overwrite a previous survey.
+- **Robust Recording:** The red "Start Recording" button safely spawns `ros2 bag record` in the background, and "Stop Recording" securely terminates it to prevent SQLite3 database corruption.
+
+## Surveying Workflow (Command Line)
+
+For high-precision surveying, this repository includes automation scripts and tuned parameters to ensure perfect synchronization and loop closure:
+
+1. **Recording Data**: Use the provided `record_survey.sh` to record the exact topics required by LIO-SAM (`/points_raw` and `/imu_correct`).
+   ```bash
+   ./record_survey.sh [optional_bag_name]
+   ```
+
+2. **Survey-Grade Parameters**: The configuration file `config/params_survey_grade.yaml` is pre-tuned for high-density keyframe generation and strict loop closures (`historyKeyframeFitnessScore: 0.3`). To use it, edit `launch/run.launch.py` to point to `params_survey_grade.yaml` instead of `params.yaml`, then run `colcon build`.
+
+3. **Running the Survey**: Use `run_survey.sh` to launch LIO-SAM, play a bag file with clock synchronization (`--clock`), and automatically prompt you to save the fully optimized map when done.
+   ```bash
+   ./run_survey.sh path/to/dataset_bag
+   ```
+
+4. **Viewing the Map**: The final map is saved as `.pcd` files (e.g., `GlobalMap.pcd`). **CloudCompare** has native support for these files—you can simply drag and drop the `.pcd` directly into the CloudCompare window to visualize the 3D map! If you need to convert it to `.ply` for other pipelines, you can run:
+   ```bash
+   pcl_pcd2ply path/to/GlobalMap.pcd path/to/output.ply
+   ```
+
+## Other notes
+
+  - **Loop closure:** The loop function here gives an example of proof of concept. It is directly adapted from LeGO-LOAM loop closure. For more advanced loop closure implementation, please refer to [ScanContext](https://github.com/irapkaist/SC-LeGO-LOAM). Set the "loopClosureEnableFlag" in "params.yaml" to "true" to test the loop closure function. In Rviz, uncheck "Map (cloud)" and check "Map (global)". This is because the visualized map - "Map (cloud)" - is simply a stack of point clouds in Rviz. Their postion will not be updated after pose correction. The loop closure function here is simply adapted from LeGO-LOAM, which is an ICP-based method. Because ICP runs pretty slow, it is suggested that the playback speed is set to be "-r 1". You can try the Garden dataset for testing.
+
+<p align='center'>
+    <img src="./config/doc/loop-closure.gif" alt="drawing" width="350"/>
+    <img src="./config/doc/loop-closure-2.gif" alt="drawing" width="350"/>
+</p>
+
+  - **Using GPS:** The park dataset is provided for testing LIO-SAM with GPS data. This dataset is gathered by [Yewei Huang](https://robustfieldautonomylab.github.io/people.html). To enable the GPS function, change "gpsTopic" in "params.yaml" to "odometry/gps". In Rviz, uncheck "Map (cloud)" and check "Map (global)". Also check "Odom GPS", which visualizes the GPS odometry. "gpsCovThreshold" can be adjusted to filter bad GPS readings. "poseCovThreshold" can be used to adjust the frequency of adding GPS factor to the graph. For example, you will notice the trajectory is constantly corrected by GPS whey you set "poseCovThreshold" to 1.0. Because of the heavy iSAM optimization, it's recommended that the playback speed is "-r 1".
+
+<p align='center'>
+    <img src="./config/doc/gps-demo.gif" alt="drawing" width="400"/>
+</p>
+
+  - **KITTI:** Since LIO-SAM needs a high-frequency IMU for function properly, we need to use KITTI raw data for testing. One problem remains unsolved is that the intrinsics of the IMU are unknown, which has a big impact on the accuracy of LIO-SAM. Download the provided sample data and make the following changes in "params.yaml":
+    - extrinsicTrans: [-8.086759e-01, 3.195559e-01, -7.997231e-01] 
+    - extrinsicRot: [9.999976e-01, 7.553071e-04, -2.035826e-03, -7.854027e-04, 9.998898e-01, -1.482298e-02, 2.024406e-03, 1.482454e-02, 9.998881e-01]
+    - extrinsicRPY: [9.999976e-01, 7.553071e-04, -2.035826e-03, -7.854027e-04, 9.998898e-01, -1.482298e-02, 2.024406e-03, 1.482454e-02, 9.998881e-01]
+    - N_SCAN: 64
+    - downsampleRate: 2 or 4
+    - loopClosureEnableFlag: true or false
+
+<p align='center'>
+    <img src="./config/doc/kitti-map.png" alt="drawing" width="300"/>
+    <img src="./config/doc/kitti-demo.gif" alt="drawing" width="300"/>
+</p>
+
+  - **Ouster lidar:** To make LIO-SAM work with Ouster lidar, some preparations needs to be done on hardware and software level.
+    - Hardware:
+      - Use an external IMU. LIO-SAM does not work with the internal 6-axis IMU of Ouster lidar. You need to attach a 9-axis IMU to the lidar and perform data-gathering.
+      - Configure the driver. Change "timestamp_mode" in your Ouster launch file to "TIME_FROM_PTP_1588" so you can have ROS format timestamp for the point clouds.
+    - Config:
+      - Change "sensor" in "params.yaml" to "ouster".
+      - Change "N_SCAN" and "Horizon_SCAN" in "params.yaml" according to your lidar, i.e., N_SCAN=128, Horizon_SCAN=1024.
+    - Gen 1 and Gen 2 Ouster:
+      It seems that the point coordinate definition might be different in different generations. Please refer to [Issue #94](https://github.com/TixiaoShan/LIO-SAM/issues/94) for debugging.
+
+<p align='center'>
+    <img src="./config/doc/ouster-device.jpg" alt="drawing" width="300"/>
+    <img src="./config/doc/ouster-demo.gif" alt="drawing" width="300"/>
+</p>
+
+## Issues
+
+  - **Zigzag or jerking behavior**: if your lidar and IMU data formats are consistent with the requirement of LIO-SAM, this problem is likely caused by un-synced timestamp of lidar and IMU data.
+
+  - **Jumpping up and down**: if you start testing your bag file and the base_link starts to jump up and down immediately, it is likely your IMU extrinsics are wrong. For example, the gravity acceleration has negative value.
+
+  - **mapOptimization crash**: it is usually caused by GTSAM. Please install the GTSAM specified in the README.md. More similar issues can be found [here](https://github.com/TixiaoShan/LIO-SAM/issues).
+
+  - **gps odometry unavailable**: it is generally caused due to unavailable transform between message frame_ids and robot frame_id (for example: transform should be available from "imu_frame_id" and "gps_frame_id" to "base_link" frame. Please read the Robot Localization documentation found [here](http://docs.ros.org/en/melodic/api/robot_localization/html/preparing_sensor_data.html).
+
+## Paper 
+
+Thank you for citing [LIO-SAM (IROS-2020)](./config/doc/paper.pdf) if you use any of this code. 
+```
+@inproceedings{liosam2020shan,
+  title={LIO-SAM: Tightly-coupled Lidar Inertial Odometry via Smoothing and Mapping},
+  author={Shan, Tixiao and Englot, Brendan and Meyers, Drew and Wang, Wei and Ratti, Carlo and Rus Daniela},
+  booktitle={IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={5135-5142},
+  year={2020},
+  organization={IEEE}
+}
+```
+
+Part of the code is adapted from [LeGO-LOAM](https://github.com/RobustFieldAutonomyLab/LeGO-LOAM).
+```
+@inproceedings{legoloam2018shan,
+  title={LeGO-LOAM: Lightweight and Ground-Optimized Lidar Odometry and Mapping on Variable Terrain},
+  author={Shan, Tixiao and Englot, Brendan},
+  booktitle={IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={4758-4765},
+  year={2018},
+  organization={IEEE}
+}
+```
+
+## TODO
+
+  - [ ] [Bug within imuPreintegration](https://github.com/TixiaoShan/LIO-SAM/issues/104)
+
+## Related Package
+
+  - [Lidar-IMU calibration](https://github.com/chennuo0125-HIT/lidar_imu_calib)
+  - [LIO-SAM with Scan Context](https://github.com/gisbi-kim/SC-LIO-SAM)
+
+## Acknowledgement
+
+  - LIO-SAM is based on LOAM (J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time).

@@ -1,0 +1,107 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+
+    # ==============================================================================
+    # Goal: Medium Accuracy, Slow Processing
+    # How: 
+    #   - Increased voxel filter leaf sizes (0.3/0.15) to reduce point cloud density compared to survey grade.
+    #   - Maintained low keyframe adding thresholds (0.2m / 0.05rad) to keep a dense pose graph.
+    #   - Maintained mappingProcessInterval at 0.0s to process mapping optimization as frequently as possible.
+    #   - Kept large search radiuses and history frames for robust scan-to-map and loop closure.
+    #   - Reduced lidarMaxRange to 50.0m to use only closer, more accurate beam returns.
+    # Why: This configuration relies on a slightly sparser point cloud but maintains a very dense trajectory 
+    #      graph and exhaustive matching. It runs slower than 'fast' because it processes keyframes more 
+    #      frequently and matches against larger submaps, providing better continuity at medium resolution.
+    # ==============================================================================
+
+    # Topics
+    pointCloudTopic: "/points_raw" # Point cloud data
+    imuTopic: "/imu_correct"                        # IMU data
+    odomTopic: "odometry/imu"                    # IMU pre-preintegration odometry, same frequency as IMU
+    gpsTopic: "odometry/gpsz"                    # GPS odometry topic from navsat, see module_navsat.launch file
+
+    # Frames
+    lidarFrame: "lidar_link"
+    baselinkFrame: "base_link"
+    odometryFrame: "odom"
+    mapFrame: "map"
+
+    # GPS Settings
+    useImuHeadingInitialization: true           # if using GPS data, set to "true"
+    useGpsElevation: false                       # if GPS elevation is bad, set to "false"
+    gpsCovThreshold: 2.0                         # m^2, threshold for using GPS data
+    poseCovThreshold: 25.0                       # m^2, threshold for using GPS data
+
+    # Export settings
+    savePCD: false                               # https://github.com/TixiaoShan/LIO-SAM/issues/3
+    savePCDDirectory: "/Downloads/LOAM/"         # in your home folder, starts and ends with "/". Warning: the code deletes "LOAM" folder then recreates it. See "mapOptimization" for implementation
+
+    # Sensor Settings
+    sensor: velodyne                               # lidar sensor type, either 'velodyne' or 'ouster'
+    N_SCAN: 16                                   # number of lidar channel (i.e., 16, 32, 64, 128)
+    Horizon_SCAN: 1800                            # lidar horizontal resolution (Velodyne:1800, Ouster:512,1024,2048)
+    downsampleRate: 1                            # default: 1. Downsample your data if too many
+    # points. i.e., 16 = 64 / 4, 16 = 16 / 1
+    lidarMinRange: 1.0                           # default: 1.0, minimum lidar range to be used
+    lidarMaxRange: 50.0                          # adjusted to 50.0m for more accurate, closer returns
+
+    # IMU Settings
+    imuAccNoise: 0.1
+    imuGyrNoise: 0.01
+    imuAccBiasN: 1.0e-3
+    imuGyrBiasN: 1.0e-4
+
+    imuGravity: 9.80511
+    imuRPYWeight: 0.00
+
+    extrinsicTrans:  [ 0.0,  0.0,  0.0 ]
+    extrinsicRot:    [ 1.0,  0.0,  0.0,
+                       0.0,  1.0,  0.0,
+                       0.0,  0.0,  1.0 ]
+    extrinsicRPY: [ 1.0,  0.0,  0.0,
+                     0.0,  1.0,  0.0,
+                     0.0,  0.0,  1.0 ]
+
+    # LOAM feature threshold
+    edgeThreshold: 1.0
+    surfThreshold: 0.1
+    edgeFeatureMinValidNum: 3
+    surfFeatureMinValidNum: 100
+
+    # voxel filter paprams
+    odometrySurfLeafSize: 0.3                     # adjusted for med-accuracy
+    mappingCornerLeafSize: 0.15                   # adjusted for med-accuracy
+    mappingSurfLeafSize: 0.3                      # adjusted for med-accuracy
+
+    # robot motion constraint (in case you are using a 2D robot)
+    z_tollerance: 1000.0                          # meters
+    rotation_tollerance: 1000.0                   # radians
+
+    # CPU Params
+    numberOfCores: 4                              # number of cores for mapping optimization
+    mappingProcessInterval: 0.0                   # seconds, process as frequently as possible
+
+    # Surrounding map
+    surroundingkeyframeAddingDistThreshold: 0.2   # meters, regulate keyframe adding threshold
+    surroundingkeyframeAddingAngleThreshold: 0.05  # radians, regulate keyframe adding threshold
+    surroundingKeyframeDensity: 2.0               # meters, downsample surrounding keyframe poses   
+    surroundingKeyframeSearchRadius: 50.0         # meters, within n meters scan-to-map optimization
+    # (when loop closure disabled)
+
+    # Loop closure
+    loopClosureEnableFlag: true
+    loopClosureFrequency: 1.0                     # Hz, regulate loop closure constraint add frequency
+    surroundingKeyframeSize: 50                   # submap size (when loop closure enabled)
+    historyKeyframeSearchRadius: 15.0             # meters, key frame that is within n meters from
+    # current pose will be considerd for loop closure
+    historyKeyframeSearchTimeDiff: 30.0           # seconds, key frame that is n seconds older will be
+    # considered for loop closure
+    historyKeyframeSearchNum: 25                  # number of hostory key frames will be fused into a
+    # submap for loop closure
+    historyKeyframeFitnessScore: 0.3              # icp threshold, the smaller the better alignment
+
+    # Visualization
+    globalMapVisualizationSearchRadius: 1000.0    # meters, global map visualization radius
+    globalMapVisualizationPoseDensity: 10.0       # meters, global map visualization keyframe density
+    globalMapVisualizationLeafSize: 1.0           # meters, global map visualization cloud density
