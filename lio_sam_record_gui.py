@@ -4,6 +4,7 @@ from tkinter import ttk, filedialog, messagebox
 import subprocess
 import threading
 import os
+import shlex
 import time
 
 class RecorderGUI:
@@ -116,7 +117,7 @@ class RecorderGUI:
         self.log(f"=> Starting recording to: {bag_out}")
         self.log(f"=> Topics: {lidar}, {imu}")
         
-        cmd = f"ros2 bag record {lidar} {imu} -o {bag_out}"
+        cmd = f"ros2 bag record {shlex.quote(lidar)} {shlex.quote(imu)} -o {shlex.quote(bag_out)}"
         
         def run_record():
             try:

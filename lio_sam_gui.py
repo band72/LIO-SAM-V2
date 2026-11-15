@@ -5,7 +5,11 @@ import subprocess
 import threading
 import os
 import signal
+import sys
 import time
+
+# Default folder for bag files (FTP drop on the SSD)
+BAGS_DIR = "/home/artwalk/Media/Disks/SSD1/FTP"
 
 class LIOSAMApp:
     def __init__(self, root):
@@ -31,12 +35,18 @@ class LIOSAMApp:
         self.bag_path_var = tk.StringVar()
         tk.Entry(frame_top, textvariable=self.bag_path_var, width=50).grid(row=0, column=1, padx=5)
         tk.Button(frame_top, text="Browse", command=self.browse_bag).grid(row=0, column=2)
+        self.btn_import = tk.Button(frame_top, text="Import ROS 1 .bag…", command=self.import_ros1_bag)
+        self.btn_import.grid(row=0, column=3, padx=5)
         
         # Config Selection
         tk.Label(frame_top, text="Configuration:").grid(row=1, column=0, sticky="w", pady=5)
         self.config_var = tk.StringVar(value="params.yaml")
         config_dropdown = ttk.Combobox(frame_top, textvariable=self.config_var, state="readonly", width=47)
-        config_dropdown['values'] = ("params.yaml", "params_survey_grade.yaml")
+        config_dir = os.path.join(self.workspace_dir, "config")
+        configs = sorted(f for f in os.listdir(config_dir) if f.startswith("params") and f.endswith(".yaml")) \
+            if os.path.isdir(config_dir) else []
+        config_dropdown['values'] = tuple(configs) or ("params.yaml",)
+        self.config_dropdown = config_dropdown
         config_dropdown.grid(row=1, column=1, padx=5, sticky="w")
         tk.Button(frame_top, text="✎ Edit", command=self.edit_config).grid(row=1, column=2, padx=5)
         
@@ -101,10 +111,64 @@ class LIOSAMApp:
         tk.Button(btn_frame, text="Save", bg="#2196F3", fg="white", command=save_file).pack(side=tk.RIGHT, padx=10)
         tk.Button(btn_frame, text="Cancel", command=top.destroy).pack(side=tk.RIGHT)
 
+    def _bags_dir(self):
+        return BAGS_DIR if os.path.isdir(BAGS_DIR) else os.path.expanduser("~")
+
     def browse_bag(self):
-        path = filedialog.askdirectory(title="Select ROS 2 Bag Directory")
+        path = filedialog.askdirectory(title="Select ROS 2 Bag Directory", initialdir=self._bags_dir())
         if path:
             self.bag_path_var.set(path)
+
+    def import_ros1_bag(self):
+        """Convert an Ouster + MicroStrain ROS 1 .bag into a LIO-SAM-ready ROS 2 bag."""
+        src = filedialog.askopenfilename(title="Select ROS 1 .bag", initialdir=self._bags_dir(),
+                                         filetypes=[("ROS 1 bag", "*.bag"), ("All files", "*")])
+        if not src:
+            return
+        out = os.path.splitext(src)[0] + "_ros2"
+        if os.path.exists(os.path.join(out, "metadata.yaml")):
+            self.log(f"=> Using existing converted bag: {out}")
+            self._use_converted(out)
+            return
+        if os.path.exists(out):
+            messagebox.showerror("Error", f"Output folder exists but is incomplete:\n{out}\n\nDelete it and try again.")
+            return
+        self.btn_import.config(state=tk.DISABLED)
+        self.log("==================================================")
+        self.log(f"=> Converting {os.path.basename(src)} (this can take 10+ minutes for large bags)...")
+        script = os.path.join(self.workspace_dir, "scripts", "convert_ros1_bag.py")
+
+        def run():
+            proc = subprocess.Popen([sys.executable, script, src, "-o", out],
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            last = -10
+            for line in iter(proc.stdout.readline, ''):
+                line = line.rstrip()
+                if line.startswith("PROGRESS"):
+                    pct = int(line.split()[1])
+                    if pct - last >= 5:
+                        last = pct
+                        self.root.after(0, self.log, f"   ... {pct}%")
+                elif line:
+                    self.root.after(0, self.log, line)
+            ok = proc.wait() == 0
+            self.root.after(0, self._import_done, ok, out)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _import_done(self, ok, out):
+        self.btn_import.config(state=tk.NORMAL)
+        if ok:
+            self.log("=> Conversion finished.")
+            self._use_converted(out)
+        else:
+            self.log("=> Conversion FAILED, see messages above.")
+
+    def _use_converted(self, out):
+        self.bag_path_var.set(out)
+        if "params_ouster64.yaml" in self.config_dropdown['values']:
+            self.config_var.set("params_ouster64.yaml")
+            self.log("=> Selected params_ouster64.yaml. Click 'Start SLAM' to run.")
             
     def log(self, message):
         self.console.insert(tk.END, message + "\n")
@@ -161,48 +225,59 @@ class LIOSAMApp:
         threading.Thread(target=self.run_save_and_convert, daemon=True).start()
 
     def run_save_and_convert(self):
-        self.log("==================================================")
-        self.log("=> Triggering Map Save via Service Call...")
-        
-        setup_cmd = f"source /opt/ros/jazzy/setup.bash && source {self.workspace_dir}/install/setup.bash && "
-        
-        # Call the service
-        save_cmd = setup_cmd + f"ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap \"{{resolution: 0.0, destination: '{self.map_dest}'}}\""
-        
-        try:
-            output = subprocess.check_output(save_cmd, shell=True, text=True, executable='/bin/bash')
-            self.log(output)
-            self.log("=> Map saved to " + self.map_dest)
-        except subprocess.CalledProcessError as e:
-            self.log("=> ERROR saving map: " + str(e))
-            self.btn_save.config(state=tk.NORMAL)
+        log = lambda msg: self.root.after(0, self.log, msg)  # thread-safe logging
+        log("==================================================")
+
+        # Each save gets its own folder: LIO-SAM deletes the destination folder before saving.
+        bag_name = os.path.basename(os.path.normpath(self.bag_path_var.get())) or "map"
+        out_dir = os.path.join(self.map_dest, f"{bag_name}_{time.strftime('%Y%m%d_%H%M%S')}")
+        # LIO-SAM prepends $HOME to the destination, so pass a path relative to $HOME.
+        home = os.path.expanduser("~")
+        if os.path.commonpath([home, out_dir]) != home:
+            log(f"=> ERROR: map folder must be inside {home}: {out_dir}")
+            self.root.after(0, lambda: self.btn_save.config(state=tk.NORMAL))
             return
+        dest_arg = "/" + os.path.relpath(out_dir, home) + "/"
+        pcd = os.path.join(out_dir, "GlobalMap.pcd")
+
+        log(f"=> Saving map to {out_dir} (large maps take a minute)...")
+        setup_cmd = f"source /opt/ros/jazzy/setup.bash && source {self.workspace_dir}/install/setup.bash && "
+        save_cmd = setup_cmd + f"ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap \"{{resolution: 0.0, destination: '{dest_arg}'}}\""
+        try:
+            output = subprocess.check_output(save_cmd, shell=True, text=True, executable='/bin/bash',
+                                             stderr=subprocess.STDOUT)
+            log(output.strip().splitlines()[-1] if output.strip() else "")
+        except subprocess.CalledProcessError as e:
+            log("=> ERROR saving map: " + (e.output or str(e)))
+            self.root.after(0, lambda: self.btn_save.config(state=tk.NORMAL))
+            return
+        if not os.path.exists(pcd):
+            log(f"=> ERROR: LIO-SAM reported a save but {pcd} was not written.")
+            self.root.after(0, lambda: self.btn_save.config(state=tk.NORMAL))
+            return
+        log(f"=> Map saved: {pcd} ({os.path.getsize(pcd) / 1e6:.0f} MB)")
 
         if self.convert_var.get():
-            self.log("=> Converting GlobalMap.pcd to GlobalMap.ply...")
-            convert_cmd = f"pcl_pcd2ply {self.map_dest}/GlobalMap.pcd {self.map_dest}/GlobalMap.ply"
+            log("=> Converting to GlobalMap.ply...")
             try:
-                out = subprocess.check_output(convert_cmd, shell=True, text=True, stderr=subprocess.STDOUT)
-                self.log(out)
-                self.log("=> Successfully converted to GlobalMap.ply!")
-            except subprocess.CalledProcessError as e:
-                self.log("=> ERROR converting map: " + e.output)
-                
+                subprocess.check_output(["pcl_pcd2ply", pcd, os.path.join(out_dir, "GlobalMap.ply")],
+                                        text=True, stderr=subprocess.STDOUT)
+                log("=> Wrote GlobalMap.ply")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                log("=> ERROR converting to PLY: " + getattr(e, "output", str(e)))
+
         if self.convert_las_var.get():
-            self.log("=> Converting GlobalMap.pcd to GlobalMap.las using PDAL...")
-            las_cmd = f"pdal translate {self.map_dest}/GlobalMap.pcd {self.map_dest}/GlobalMap.las"
+            log("=> Converting to GlobalMap.las...")
+            script = os.path.join(self.workspace_dir, "scripts", "pcd_to_las.py")
             try:
-                out = subprocess.check_output(las_cmd, shell=True, text=True, stderr=subprocess.STDOUT)
-                self.log(out)
-                self.log("=> Successfully converted to GlobalMap.las!")
+                out = subprocess.check_output([sys.executable, script, pcd, os.path.join(out_dir, "GlobalMap.las")],
+                                              text=True, stderr=subprocess.STDOUT)
+                log("=> " + out.strip())
             except subprocess.CalledProcessError as e:
-                if e.returncode == 127:
-                    self.log("=> ERROR: PDAL not installed. Run: sudo apt install pdal")
-                    messagebox.showerror("Missing Dependency", "To export to LAS, you must install PDAL.\nRun this in your terminal:\nsudo apt install pdal")
-                else:
-                    self.log("=> ERROR converting to LAS: " + e.output)
-        
-        self.log("=> Process Complete! You may stop the SLAM node.")
+                log("=> ERROR converting to LAS: " + e.output)
+
+        log(f"=> Done. Files are in {out_dir}")
+        self.root.after(0, lambda: self.btn_save.config(state=tk.NORMAL))
 
     def stop_all(self):
         self.log("=> Stopping processes...")
