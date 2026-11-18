@@ -171,9 +171,17 @@ class LIOSAMApp:
             self.log("=> Selected params_ouster64.yaml. Click 'Start SLAM' to run.")
             
     def log(self, message):
+        # Tk is not thread-safe: hop to the main thread when called from a worker.
+        if threading.current_thread() is not threading.main_thread():
+            self.root.after(0, self.log, message)
+            return
         self.console.insert(tk.END, message + "\n")
+        # Cap the console so long SLAM runs don't make the widget (and the GUI) sluggish.
+        lines = int(self.console.index("end-1c").split(".")[0])
+        if lines > 3000:
+            self.console.delete("1.0", f"{lines - 3000}.0")
         self.console.see(tk.END)
-        
+
     def stream_output(self, process):
         for line in iter(process.stdout.readline, ''):
             self.root.after(0, self.log, line.strip())
