@@ -148,6 +148,8 @@ If you need to change target sizes, edit the parameters at the top of `src/targe
 
   - [**Issues**](#issues)
 
+  - [**License and attribution**](#license-and-attribution)
+
   - [**Paper**](#paper)
 
   - [**TODO**](#todo)
@@ -374,6 +376,14 @@ For high-precision surveying, this repository includes automation scripts and tu
   - **mapOptimization crash**: it is usually caused by GTSAM. Please install the GTSAM specified in the README.md. More similar issues can be found [here](https://github.com/TixiaoShan/LIO-SAM/issues).
 
   - **gps odometry unavailable**: it is generally caused due to unavailable transform between message frame_ids and robot frame_id (for example: transform should be available from "imu_frame_id" and "gps_frame_id" to "base_link" frame. Please read the Robot Localization documentation found [here](http://docs.ros.org/en/melodic/api/robot_localization/html/preparing_sensor_data.html).
+
+## License and attribution
+
+LIO-SAM-V2 is based on **LIO-SAM** by Tixiao Shan et al. (IROS 2020), licensed under **BSD 3-Clause**
+(© 2020 Tixiao Shan, © 2021 Christoph Gruber), and on LeGO-LOAM (BSD 3-Clause, © 2018 Robust Field Autonomy
+Lab). The original SLAM code in `src/`, `include/`, `msg/`, `srv/`, and the launch and config files, including
+modifications of it, stays under BSD 3-Clause; see [licenses/](licenses/). New files added in this repository
+are MIT (see [LICENSE](LICENSE)). Details and BibTeX are in [NOTICE.md](NOTICE.md).
 
 ## Paper 
 
