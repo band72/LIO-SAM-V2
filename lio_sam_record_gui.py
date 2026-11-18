@@ -72,22 +72,31 @@ class RecorderGUI:
             self.bag_name_var.set(os.path.join(path, f"survey_{int(time.time())}"))
 
     def log(self, msg):
+        # Tk is not thread-safe: hop to the main thread when called from a worker.
+        if threading.current_thread() is not threading.main_thread():
+            self.root.after(0, self.log, msg)
+            return
         self.console.insert(tk.END, msg + "\n")
+        lines = int(self.console.index("end-1c").split(".")[0])
+        if lines > 3000:
+            self.console.delete("1.0", f"{lines - 3000}.0")
         self.console.see(tk.END)
-        self.root.update()
 
     def refresh_topics(self):
         self.topic_list.delete("1.0", tk.END)
         self.topic_list.insert(tk.END, "Querying live topics...\n")
-        self.root.update()
-        
+
         def run_query():
             try:
-                out = subprocess.check_output("ros2 topic list", shell=True, text=True, stderr=subprocess.STDOUT)
-                self.root.after(0, lambda: self.update_topic_display(out))
-            except Exception as e:
-                self.root.after(0, lambda: self.update_topic_display(f"Error querying topics: {str(e)}\nMake sure ROS 2 is sourced!"))
-                
+                # timeout: 'ros2 topic list' can hang when the ROS daemon is unhealthy
+                out = subprocess.check_output(["ros2", "topic", "list"], text=True,
+                                              stderr=subprocess.STDOUT, timeout=15)
+            except subprocess.TimeoutExpired:
+                out = "Timed out querying topics (15 s). Is the ROS 2 daemon stuck? Try: ros2 daemon stop"
+            except Exception as e:  # bind the text now; 'e' is cleared after the except block
+                out = f"Error querying topics: {e}\nMake sure ROS 2 is sourced!"
+            self.root.after(0, self.update_topic_display, out)
+
         threading.Thread(target=run_query, daemon=True).start()
         
     def update_topic_display(self, text):
